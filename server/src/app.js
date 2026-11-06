@@ -1,6 +1,7 @@
 
 import express from "express";
 import cors from "cors";
+import db from "./config/db.js";
 
 const app = express();
 
@@ -22,12 +23,22 @@ app.get("/", (req, res) => {
   });
 });
 
-// Health check
-app.get("/api/health", (req, res) => {
-  res.status(200).json({
-    success: true,
-    message: "Enventory API is running",
-  });
+// Health check (API + koneksi database)
+app.get("/api/health", async (req, res) => {
+  try {
+    await db.query("SELECT 1");
+    res.status(200).json({
+      success: true,
+      message: "Enventory API is running",
+      database: "connected",
+    });
+  } catch (err) {
+    res.status(503).json({
+      success: false,
+      message: "Enventory API is running, but database is unreachable",
+      database: "disconnected",
+    });
+  }
 });
 
 // 404 handler
