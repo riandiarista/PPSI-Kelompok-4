@@ -1,7 +1,7 @@
 // Menjalankan file .sql di folder migrations secara berurutan.
 //   npm run migrate        -> jalankan migration yang belum pernah dijalankan
 //   npm run migrate:reset  -> HAPUS semua tabel lalu jalankan ulang (khusus development)
-import "dotenv/config";
+import dotenv from "dotenv";
 import fs from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
@@ -10,11 +10,15 @@ import pg from "pg";
 const { Pool } = pg;
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
+// Pastikan .env dari folder server selalu terbaca terlepas dari mana perintah dijalankan
+dotenv.config({ path: path.join(__dirname, "..", ".env") });
+dotenv.config();
+
 const pool = new Pool({
   host: process.env.DB_HOST || 'localhost',
   port: Number(process.env.DB_PORT) || 5432,
-  user: process.env.DB_USER,
-  password: process.env.DB_PASSWORD,
+  user: process.env.DB_USER || 'postgres',
+  password: String(process.env.DB_PASSWORD ?? ''),
   database: process.env.DB_NAME,
 });
 
@@ -68,6 +72,19 @@ async function main() {
 }
 
 main().catch((err) => {
-  console.error(err.message);
+  const host = process.env.DB_HOST || 'localhost';
+  const port = process.env.DB_PORT || 5432;
+  const user = process.env.DB_USER || 'postgres';
+  const dbName = process.env.DB_NAME || 'inventaris_unp';
+
+  if (err.code === '28P01' || err.message?.includes('SASL') || err.message?.includes('password')) {
+    console.error(`Gagal autentikasi: Password database salah atau belum diisi untuk user "${user}". Periksa DB_PASSWORD di server/.env.`);
+  } else if (err.code === '3D000') {
+    console.error(`Database "${dbName}" tidak ditemukan. Silakan buat database ini di pgAdmin terlebih dahulu.`);
+  } else if (err.code === 'ECONNREFUSED' || err.code === 'EACCES') {
+    console.error(`Tidak dapat terhubung ke PostgreSQL di ${host}:${port}. Pastikan service PostgreSQL sudah berjalan.`);
+  } else {
+    console.error('Error saat menjalankan migrasi:', err.message || err);
+  }
   process.exit(1);
 });

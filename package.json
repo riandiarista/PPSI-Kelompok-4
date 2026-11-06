@@ -1,0 +1,11 @@
+{
+  "name": "enventory",
+  "private": true,
+  "scripts": {
+    "migrate": "npm --prefix server run migrate",
+    "migrate:reset": "npm --prefix server run migrate:reset",
+    "dev:server": "npm --prefix server run dev",
+    "dev:client": "npm --prefix client run dev"
+  }
+}
+
