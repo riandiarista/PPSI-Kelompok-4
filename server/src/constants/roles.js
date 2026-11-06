@@ -25,7 +25,11 @@ export const ACCESS = Object.freeze({
   cekPengembalian: [TENDIK],
 
   // Akun pengguna (#20)
-  kelolaAkun: [KADEP],
+  kelolaAkun: [TENDIK],
+
+  // Poin & reward
+  lihatPoinSendiri: [PEMINJAM],
+  aturPoinReward: [KADEP],
 
   // Laporan & audit
   lihatLaporan: [TENDIK, KADEP],

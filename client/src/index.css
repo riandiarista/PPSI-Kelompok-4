@@ -11,4 +11,8 @@
   --color-dark: #14231F;
   --color-muted: #4A5B56;
   --color-border-subtle: #A9B7B2;
+
+  /* Warna dashboard */
+  --color-primary: #1E3F70;        /* menu aktif di sidebar */
+  --color-danger: #B42318;         /* pesan error */
 }

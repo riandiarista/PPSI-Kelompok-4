@@ -8,4 +8,10 @@ export default defineConfig({
     react(),
     tailwindcss(),
   ],
+  server: {
+    // Request ke /api diteruskan ke backend Express (npm run dev di folder server)
+    proxy: {
+      '/api': 'http://localhost:5000',
+    },
+  },
 })
