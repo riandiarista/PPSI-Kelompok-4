@@ -2,6 +2,7 @@
 import express from "express";
 import cors from "cors";
 import db from "./config/db.js";
+import authRoutes from "./routes/auth.js";
 
 const app = express();
 
@@ -40,6 +41,9 @@ app.get("/api/health", async (req, res) => {
     });
   }
 });
+
+// Routes
+app.use("/api/auth", authRoutes);
 
 // 404 handler
 app.use((req, res) => {
