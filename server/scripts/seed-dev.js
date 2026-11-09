@@ -31,8 +31,8 @@ try {
 
   for (const u of USERS) {
     const { rowCount } = await client.query(
-      `INSERT INTO users (role_id, full_name, email, password_hash)
-       SELECT role_id, $1, $2, $3 FROM roles WHERE role_name = $4
+      `INSERT INTO users (role_id, full_name, email, password_hash, registration_status, auth_provider, email_verified, is_active)
+       SELECT role_id, $1, $2, $3, 'approved', 'local', TRUE, TRUE FROM roles WHERE role_name = $4
        ON CONFLICT (email) DO NOTHING`,
       [u.full_name, u.email, hash, u.role]
     );

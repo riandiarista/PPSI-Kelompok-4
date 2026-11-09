@@ -6,9 +6,9 @@ import { JWT_SECRET } from "../config/jwt.js";
  * Memastikan request membawa token JWT yang valid
  * (header: Authorization: Bearer <token>).
  *
- * Kalau valid, mengisi req.user = { user_id, role, full_name, email }.
+ * Kalau valid, mengisi req.user = { user_id, role, full_name, email, ... }.
  * Data user diambil ulang dari database setiap request, jadi akun yang
- * dinonaktifkan atau diganti role-nya (#20) langsung berlaku tanpa
+ * dinonaktifkan, ditolak, atau diganti role-nya (#20) langsung berlaku tanpa
  * menunggu token kedaluwarsa.
  */
 export async function authenticate(req, res, next) {
@@ -34,7 +34,8 @@ export async function authenticate(req, res, next) {
   }
 
   const { rows } = await db.query(
-    `SELECT u.user_id, u.full_name, u.email, u.is_active, r.role_name AS role
+    `SELECT u.user_id, u.full_name, u.email, u.is_active, u.registration_status,
+            u.auth_provider, u.avatar_url, u.must_change_password, r.role_name AS role
        FROM users u
        JOIN roles r ON r.role_id = u.role_id
       WHERE u.user_id = $1`,
@@ -49,11 +50,25 @@ export async function authenticate(req, res, next) {
     });
   }
 
+  if (user.registration_status !== "approved") {
+    return res.status(403).json({
+      success: false,
+      message:
+        user.registration_status === "pending"
+          ? "Pendaftaran Anda sedang menunggu persetujuan administrator."
+          : "Pendaftaran Anda ditolak. Anda tidak dapat mengakses aplikasi.",
+    });
+  }
+
   req.user = {
     user_id: user.user_id,
     role: user.role,
     full_name: user.full_name,
     email: user.email,
+    registration_status: user.registration_status,
+    auth_provider: user.auth_provider,
+    avatar_url: user.avatar_url,
+    must_change_password: user.must_change_password,
   };
   next();
 }

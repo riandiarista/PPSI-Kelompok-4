@@ -5,6 +5,7 @@ import { useAuth } from './auth/authContext'
 import AppLayout from './components/AppLayout'
 import { homeFor, MENUS } from './navigation'
 import LoginPage from './pages/LoginPage'
+import KelolaAkunPage from './pages/KelolaAkunPage'
 import PlaceholderPage from './pages/PlaceholderPage'
 
 export default function App() {
@@ -33,7 +34,17 @@ function AppRoutes() {
         <Route key={role} element={<RequireRole role={role} />}>
           <Route element={<AppLayout />}>
             {menu.map((item) => (
-              <Route key={item.path} path={item.path} element={<PlaceholderPage title={item.label} />} />
+              <Route
+                key={item.path}
+                path={item.path}
+                element={
+                  item.path === '/tendik/akun' ? (
+                    <KelolaAkunPage />
+                  ) : (
+                    <PlaceholderPage title={item.label} />
+                  )
+                }
+              />
             ))}
           </Route>
         </Route>

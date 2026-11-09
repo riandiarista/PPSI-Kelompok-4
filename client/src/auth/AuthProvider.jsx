@@ -32,6 +32,32 @@ export default function AuthProvider({ children }) {
     return res.data.user
   }, [])
 
+  const loginWithGoogle = useCallback(async (credential) => {
+    const res = await api('/auth/google', { method: 'POST', body: { credential } })
+    if (res.data?.token) {
+      setToken(res.data.token)
+      setUser(res.data.user)
+      return { success: true, user: res.data.user }
+    }
+    // Jika berstatus pending atau registrasi baru, return data tanpa setToken
+    return {
+      success: false,
+      pending: res.data?.registration_status === 'pending',
+      data: res.data,
+      message: res.message,
+    }
+  }, [])
+
+  const changePassword = useCallback(async (oldPassword, newPassword) => {
+    const res = await api('/auth/change-password', {
+      method: 'POST',
+      body: { old_password: oldPassword, new_password: newPassword },
+    })
+    // Perbarui state must_change_password
+    setUser((prev) => (prev ? { ...prev, must_change_password: false } : prev))
+    return res
+  }, [])
+
   const logout = useCallback(async () => {
     try {
       await api('/auth/logout', { method: 'POST' })
@@ -42,7 +68,10 @@ export default function AuthProvider({ children }) {
     setUser(null)
   }, [])
 
-  const value = useMemo(() => ({ user, checking, login, logout }), [user, checking, login, logout])
+  const value = useMemo(
+    () => ({ user, checking, login, loginWithGoogle, changePassword, logout }),
+    [user, checking, login, loginWithGoogle, changePassword, logout]
+  )
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>
 }
