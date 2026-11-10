@@ -4,6 +4,7 @@ import cors from "cors";
 import db from "./config/db.js";
 import authRoutes from "./routes/auth.js";
 import adminUserRoutes from "./routes/adminUsers.js";
+import inventoryRoutes from "./routes/inventory.js";
 
 const app = express();
 
@@ -46,6 +47,7 @@ app.get("/api/health", async (req, res) => {
 // Routes
 app.use("/api/auth", authRoutes);
 app.use("/api/admin", adminUserRoutes);
+app.use("/api/inventory", inventoryRoutes);
 
 // 404 handler
 app.use((req, res) => {

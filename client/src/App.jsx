@@ -6,6 +6,7 @@ import AppLayout from './components/AppLayout'
 import { homeFor, MENUS } from './navigation'
 import LoginPage from './pages/LoginPage'
 import KelolaAkunPage from './pages/KelolaAkunPage'
+import KelolaInventarisPage from './pages/KelolaInventarisPage'
 import PlaceholderPage from './pages/PlaceholderPage'
 
 export default function App() {
@@ -40,6 +41,8 @@ function AppRoutes() {
                 element={
                   item.path === '/tendik/akun' ? (
                     <KelolaAkunPage />
+                  ) : item.path === '/tendik/inventaris' ? (
+                    <KelolaInventarisPage />
                   ) : (
                     <PlaceholderPage title={item.label} />
                   )
