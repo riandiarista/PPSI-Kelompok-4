@@ -7,6 +7,7 @@ import { homeFor, MENUS } from './navigation'
 import LoginPage from './pages/LoginPage'
 import KelolaAkunPage from './pages/KelolaAkunPage'
 import KelolaInventarisPage from './pages/KelolaInventarisPage'
+import KatalogBarangPage from './pages/KatalogBarangPage'
 import PlaceholderPage from './pages/PlaceholderPage'
 
 export default function App() {
@@ -43,6 +44,8 @@ function AppRoutes() {
                     <KelolaAkunPage />
                   ) : item.path === '/tendik/inventaris' ? (
                     <KelolaInventarisPage />
+                  ) : item.path === '/peminjam/katalog' ? (
+                    <KatalogBarangPage />
                   ) : (
                     <PlaceholderPage title={item.label} />
                   )
