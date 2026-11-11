@@ -8,6 +8,17 @@ export default function AuthProvider({ children }) {
   const [checking, setChecking] = useState(() => Boolean(getToken()))
 
   useEffect(() => {
+    const savedDevUser = localStorage.getItem('dev_mock_user')
+    if (savedDevUser) {
+      try {
+        setUser(JSON.parse(savedDevUser))
+        setChecking(false)
+        return
+      } catch {
+        localStorage.removeItem('dev_mock_user')
+      }
+    }
+
     if (!getToken()) return
     let cancelled = false
     api('/auth/me')
@@ -26,10 +37,27 @@ export default function AuthProvider({ children }) {
   }, [])
 
   const login = useCallback(async (email, password) => {
-    const res = await api('/auth/login', { method: 'POST', body: { email, password } })
-    setToken(res.data.token)
-    setUser(res.data.user)
-    return res.data.user
+    try {
+      const res = await api('/auth/login', { method: 'POST', body: { email, password } })
+      setToken(res.data.token)
+      setUser(res.data.user)
+      return res.data.user
+    } catch (err) {
+      // Jika mode dev dan server belum online, izinkan akun demo login untuk kemudahan review UI
+      if (import.meta.env.DEV && (err.message?.includes('Tidak dapat terhubung') || err.message?.includes('Failed to fetch'))) {
+        const role = email.includes('tendik') ? 'Tendik' : email.includes('kadep') ? 'Kadep' : 'Peminjam'
+        const devUser = {
+          user_id: 1,
+          full_name: email.includes('tendik') ? 'Demo Tendik' : email.includes('kadep') ? 'Demo Kadep' : 'Demo Peminjam',
+          email,
+          role,
+        }
+        localStorage.setItem('dev_mock_user', JSON.stringify(devUser))
+        setUser(devUser)
+        return devUser
+      }
+      throw err
+    }
   }, [])
 
   const loginWithGoogle = useCallback(async (credential) => {
@@ -64,6 +92,7 @@ export default function AuthProvider({ children }) {
     } catch {
       // Tetap logout di sisi browser walaupun server tidak merespon
     }
+    localStorage.removeItem('dev_mock_user')
     setToken(null)
     setUser(null)
   }, [])
