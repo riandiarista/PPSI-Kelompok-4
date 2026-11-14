@@ -3,6 +3,36 @@ import { Link } from 'react-router-dom'
 import Icon from '../components/Icon'
 import { api } from '../lib/api'
 
+// Harus sama dengan server/src/constants/loanRules.js
+const MAX_DURATION_DAYS = 7
+const MAX_ADVANCE_DAYS = 30
+
+// "YYYY-MM-DD" hari ini dalam WIB
+function todayWib() {
+  return new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Jakarta' }).format(new Date())
+}
+
+function addDays(dateStr, days) {
+  const d = new Date(`${dateStr}T12:00:00Z`)
+  d.setUTCDate(d.getUTCDate() + days)
+  return d.toISOString().slice(0, 10)
+}
+
+// "2026-11-20" -> "20 Nov 2026"
+function formatTanggal(dateStr) {
+  return new Intl.DateTimeFormat('id-ID', { day: 'numeric', month: 'short', year: 'numeric', timeZone: 'UTC' }).format(
+    new Date(`${dateStr}T12:00:00Z`)
+  )
+}
+
+// Rentang dari server [mulai, selesai) -> "20 – 21 Nov 2026" (tanggal terakhir dipakai = selesai - 1 hari)
+function formatRentang(start, end) {
+  const fmt = (d) => new Intl.DateTimeFormat('id-ID', { day: 'numeric', month: 'short', year: 'numeric', timeZone: 'Asia/Jakarta' }).format(d)
+  const s = new Date(start)
+  const last = new Date(new Date(end).getTime() - 1)
+  return fmt(s) === fmt(last) ? fmt(s) : `${fmt(s)} – ${fmt(last)}`
+}
+
 // Data bawaan sesuai tampilan desain/mockup
 const DEFAULT_ITEMS = [
   {
@@ -92,11 +122,14 @@ export default function KatalogBarangPage() {
 
   // Form State
   const [purpose, setPurpose] = useState('')
-  const [borrowDate, setBorrowDate] = useState('23 Okt 2026')
-  const [duration, setDuration] = useState('1 hari')
+  const [borrowDate, setBorrowDate] = useState(todayWib)
+  const [duration, setDuration] = useState(1)
   const [submitting, setSubmitting] = useState(false)
   const [formError, setFormError] = useState('')
   const [successModal, setSuccessModal] = useState({ open: false, data: null })
+  // Hasil cek ketersediaan & bentrok jadwal (#24), disimpan bersama kunci query-nya
+  const [availability, setAvailability] = useState({ key: null, data: null, error: '' })
+  const [availabilityVersion, setAvailabilityVersion] = useState(0)
 
   // Coba ambil data dari API server jika tersedia, fallback ke DEFAULT_ITEMS
   useEffect(() => {
@@ -135,6 +168,35 @@ export default function KatalogBarangPage() {
   const selectedItem = useMemo(() => {
     return items.find((item) => item.item_id === selectedItemId) || items[0] || null
   }, [items, selectedItemId])
+
+  // Cek ketersediaan ke server setiap kali barang/tanggal/durasi berubah
+  const canCheck = Boolean(selectedItem && selectedItem.availability_status === 'available' && borrowDate)
+  const availabilityKey = canCheck ? `${selectedItem.item_id}|${borrowDate}|${duration}|${availabilityVersion}` : null
+
+  useEffect(() => {
+    if (!availabilityKey) return
+    const [itemId, date, days] = availabilityKey.split('|')
+    let cancelled = false
+    // Jeda singkat supaya tidak memanggil server di setiap ketukan saat memilih tanggal
+    const timer = setTimeout(() => {
+      api(`/loans/availability?${new URLSearchParams({ item_id: itemId, borrow_date: date, duration_days: days })}`)
+        .then((res) => {
+          if (!cancelled) setAvailability({ key: availabilityKey, data: res.data, error: '' })
+        })
+        .catch((err) => {
+          if (!cancelled) setAvailability({ key: availabilityKey, data: null, error: err.message })
+        })
+    }, 250)
+    return () => {
+      cancelled = true
+      clearTimeout(timer)
+    }
+  }, [availabilityKey])
+
+  const availabilityReady = availabilityKey !== null && availability.key === availabilityKey
+  const checkResult = availabilityReady ? availability.data : null
+  const checkError = availabilityReady ? availability.error : ''
+  const scheduleBlocked = checkResult?.available === false
 
   // Hitung jumlah item per kategori status
   const counts = useMemo(() => {
@@ -183,20 +245,23 @@ export default function KatalogBarangPage() {
       return
     }
 
+    if (!borrowDate) {
+      setFormError('Tanggal pinjam wajib diisi.')
+      return
+    }
+
     setSubmitting(true)
 
     try {
-      // Coba kirim ke endpoint backend jika sudah ada
-      await api('/loans/request', {
+      // Server memvalidasi ulang ketersediaan & bentrok jadwal saat menyimpan
+      const res = await api('/loans/request', {
         method: 'POST',
         body: {
           item_id: selectedItem.item_id,
           purpose: purpose.trim(),
           borrow_date: borrowDate,
-          duration: duration,
+          duration_days: duration,
         },
-      }).catch(() => {
-        // Fallback mockup handling jika route belum terdaftar di backend
       })
 
       setSuccessModal({
@@ -205,13 +270,18 @@ export default function KatalogBarangPage() {
           itemName: selectedItem.item_name,
           category: selectedItem.category_name,
           purpose: purpose.trim(),
-          date: borrowDate,
-          duration: duration,
+          date: formatTanggal(borrowDate),
+          duration: `${duration} hari`,
+          message: res.message,
+          pendingOverlaps: res.data?.pending_overlaps || 0,
         },
       })
       setPurpose('')
+      // Jadwal berubah setelah pengajuan, cek ulang ketersediaannya
+      setAvailabilityVersion((v) => v + 1)
     } catch (err) {
       setFormError(err.message || 'Gagal mengajukan peminjaman.')
+      setAvailabilityVersion((v) => v + 1)
     } finally {
       setSubmitting(false)
     }
@@ -461,9 +531,14 @@ export default function KatalogBarangPage() {
                   </label>
                   <input
                     id="loan-date"
-                    type="text"
+                    type="date"
                     value={borrowDate}
-                    onChange={(e) => setBorrowDate(e.target.value)}
+                    min={todayWib()}
+                    max={addDays(todayWib(), MAX_ADVANCE_DAYS)}
+                    onChange={(e) => {
+                      setBorrowDate(e.target.value)
+                      setFormError('')
+                    }}
                     className="w-full rounded-[10px] border border-neutral-300 px-3 py-2 text-[13px] text-[#14231F] focus:border-[#1E3F70] focus:outline-none focus:ring-2 focus:ring-[#1E3F70]/15"
                   />
                 </div>
@@ -472,15 +547,31 @@ export default function KatalogBarangPage() {
                   <label htmlFor="loan-duration" className="mb-1.5 block text-[13px] font-medium text-[#14231F]">
                     Durasi
                   </label>
-                  <input
+                  <select
                     id="loan-duration"
-                    type="text"
                     value={duration}
-                    onChange={(e) => setDuration(e.target.value)}
-                    className="w-full rounded-[10px] border border-neutral-300 px-3 py-2 text-[13px] text-[#14231F] focus:border-[#1E3F70] focus:outline-none focus:ring-2 focus:ring-[#1E3F70]/15"
-                  />
+                    onChange={(e) => {
+                      setDuration(Number(e.target.value))
+                      setFormError('')
+                    }}
+                    className="w-full rounded-[10px] border border-neutral-300 bg-white px-3 py-2 text-[13px] text-[#14231F] focus:border-[#1E3F70] focus:outline-none focus:ring-2 focus:ring-[#1E3F70]/15"
+                  >
+                    {Array.from({ length: MAX_DURATION_DAYS }, (_, i) => i + 1).map((d) => (
+                      <option key={d} value={d}>
+                        {d} hari
+                      </option>
+                    ))}
+                  </select>
                 </div>
               </div>
+
+              {/* Hasil cek ketersediaan & bentrok jadwal */}
+              <AvailabilityStatus
+                enabled={canCheck}
+                loading={canCheck && !availabilityReady}
+                result={checkResult}
+                error={checkError}
+              />
 
               {/* Catatan / Peringatan Pengajuan Akhir Pekan */}
               <div className="rounded-[10px] bg-[#FEF6E6] p-3 text-[12px] leading-relaxed text-[#855302]">
@@ -490,7 +581,7 @@ export default function KatalogBarangPage() {
               {/* Tombol Kirim Pengajuan */}
               <button
                 type="submit"
-                disabled={submitting || !selectedItem || selectedItem.availability_status !== 'available'}
+                disabled={submitting || !selectedItem || selectedItem.availability_status !== 'available' || scheduleBlocked}
                 className="mt-1 flex w-full items-center justify-center rounded-[10px] bg-[#14532D] py-2.5 text-center text-[14px] font-semibold text-white shadow-sm transition hover:bg-[#0f3f22] active:scale-[0.99] disabled:cursor-not-allowed disabled:bg-neutral-300 disabled:text-neutral-500"
               >
                 {submitting ? 'Mengirim...' : 'Kirim pengajuan'}
@@ -512,8 +603,15 @@ export default function KatalogBarangPage() {
               Pengajuan Peminjaman Terkirim!
             </h3>
             <p className="mt-2 text-center text-[13.5px] text-[#4A5B56]">
-              Pengajuan untuk peminjaman <strong>{successModal.data?.itemName}</strong> berhasil dikirim dan sedang menunggu persetujuan.
+              {successModal.data?.message ||
+                'Pengajuan berhasil dikirim dan sedang menunggu persetujuan.'}
             </p>
+            {successModal.data?.pendingOverlaps > 0 && (
+              <p className="mt-2 rounded-[8px] bg-[#FEF6E6] p-2.5 text-center text-[12.5px] text-[#855302]">
+                Ada {successModal.data.pendingOverlaps} pengajuan lain di jadwal yang beririsan. Ketua Departemen
+                akan memilih salah satu.
+              </p>
+            )}
 
             <div className="my-4 rounded-[10px] bg-[#F6F7F5] p-3 text-[12.5px] text-[#14231F]">
               <div className="flex justify-between py-1 border-b border-neutral-200/60">
@@ -548,6 +646,57 @@ export default function KatalogBarangPage() {
           </div>
         </div>
       )}
+    </div>
+  )
+}
+
+// Kotak status hasil cek ketersediaan & bentrok jadwal di form pengajuan
+function AvailabilityStatus({ enabled, loading, result, error }) {
+  if (!enabled) return null
+
+  const box = 'rounded-[10px] p-3 text-[12.5px] leading-relaxed'
+
+  if (loading) {
+    return <div className={`${box} bg-[#F6F7F5] text-[#4A5B56]`}>Mengecek ketersediaan jadwal…</div>
+  }
+
+  if (error) {
+    return <div className={`${box} bg-red-50 text-red-700`}>{error}</div>
+  }
+
+  if (!result) return null
+
+  if (!result.available) {
+    return (
+      <div className={`${box} bg-red-50 text-red-700`} role="alert">
+        <p className="font-semibold">{result.reason}</p>
+        {result.conflicts?.length > 0 && (
+          <ul className="mt-1 list-disc pl-4">
+            {result.conflicts.map((c) => (
+              <li key={`${c.start}-${c.end}`}>
+                {formatRentang(c.start, c.end)}
+                {c.status === 'pending' ? ' (pengajuan Anda)' : ' (sudah disetujui)'}
+              </li>
+            ))}
+          </ul>
+        )}
+        <p className="mt-1">Silakan pilih tanggal atau durasi lain.</p>
+      </div>
+    )
+  }
+
+  if (result.pending_overlaps > 0) {
+    return (
+      <div className={`${box} bg-[#FEF6E6] text-[#855302]`}>
+        Jadwal masih bisa diajukan, tetapi ada {result.pending_overlaps} pengajuan lain yang menunggu persetujuan di
+        tanggal yang beririsan. Ketua Departemen akan memilih salah satu.
+      </div>
+    )
+  }
+
+  return (
+    <div className={`${box} bg-[#EBF7EE] text-[#1E7E34]`}>
+      Barang tersedia untuk {formatRentang(result.period.start, result.period.end)}.
     </div>
   )
 }
