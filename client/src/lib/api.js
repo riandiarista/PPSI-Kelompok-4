@@ -46,6 +46,8 @@ export async function api(path, { method = 'GET', body } = {}) {
   if (!res.ok) {
     const error = new Error(data?.message || 'Terjadi kesalahan pada server')
     error.status = res.status
+    error.data = data?.data
+    error.conflicts = data?.data?.conflicts || []
     throw error
   }
   return data

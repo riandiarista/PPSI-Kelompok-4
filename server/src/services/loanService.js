@@ -276,3 +276,366 @@ export async function createLoanRequest({ item_id, purpose, borrow_date, duratio
 export function isApprovedOverlapError(err) {
   return err?.code === "23P01" && err?.constraint === "no_overlap_approved_loans";
 }
+
+/**
+ * Antrean pengajuan peminjaman untuk Ketua Departemen.
+ *
+ * Filter:
+ *   - 'queue' / 'ready' (default): pending dengan review_queue_date <= hari ini (WIB)
+ *   - 'scheduled': pending dengan review_queue_date > hari ini (WIB)
+ *   - 'history': sudah diputuskan ('approved', 'rejected')
+ *   - 'all': semua pengajuan
+ *
+ * Urutan antrean pending: terlama diajukan lebih dulu (submitted_at ASC).
+ */
+export async function getApprovalQueue({ tab = "queue", actorUserId, now = new Date() } = {}) {
+  const today = todayWib(now);
+  const selectedTab = String(tab || "queue").toLowerCase();
+
+  let statusCondition = "r.request_status = 'pending'";
+  let dateCondition = "";
+  let orderClause = "ORDER BY r.submitted_at ASC, r.request_id ASC";
+  const params = [];
+
+  if (selectedTab === "scheduled") {
+    statusCondition = "r.request_status = 'pending'";
+    params.push(today);
+    dateCondition = `AND r.review_queue_date > $${params.length}::date`;
+  } else if (selectedTab === "history") {
+    statusCondition = "r.request_status IN ('approved', 'rejected')";
+    orderClause = "ORDER BY COALESCE(ad.decided_at, r.submitted_at) DESC, r.request_id DESC";
+  } else if (selectedTab === "all") {
+    statusCondition = "1=1";
+  } else {
+    // Default queue (siap ditinjau hari ini)
+    statusCondition = "r.request_status = 'pending'";
+    params.push(today);
+    dateCondition = `AND (r.review_queue_date IS NULL OR r.review_queue_date <= $${params.length}::date)`;
+  }
+
+  const query = `
+    SELECT
+      r.request_id,
+      r.borrower_id,
+      u.full_name AS borrower_name,
+      u.email AS borrower_email,
+      ro.role_name AS borrower_role,
+      r.item_id,
+      i.item_name,
+      c.category_name,
+      i.availability_status AS item_availability_status,
+      r.purpose,
+      r.planned_start_at,
+      r.planned_end_at,
+      r.submitted_at,
+      r.review_queue_date::text AS review_queue_date,
+      r.request_status,
+      ad.decision,
+      ad.reason AS rejection_reason,
+      ad.decided_at,
+      approver.full_name AS approver_name,
+      (
+        SELECT COUNT(*)::int
+          FROM loan_requests o
+         WHERE o.item_id = r.item_id
+           AND o.request_id <> r.request_id
+           AND o.request_status = 'pending'
+           AND tstzrange(o.planned_start_at, o.planned_end_at) && tstzrange(r.planned_start_at, r.planned_end_at)
+      ) AS pending_overlaps,
+      (
+        SELECT COUNT(*)::int
+          FROM loan_requests o
+         WHERE o.item_id = r.item_id
+           AND o.request_id <> r.request_id
+           AND o.request_status = 'approved'
+           AND tstzrange(o.planned_start_at, o.planned_end_at) && tstzrange(r.planned_start_at, r.planned_end_at)
+      ) AS approved_overlaps
+    FROM loan_requests r
+    JOIN users u ON u.user_id = r.borrower_id
+    LEFT JOIN roles ro ON ro.role_id = u.role_id
+    JOIN items i ON i.item_id = r.item_id
+    JOIN item_categories c ON c.category_id = i.category_id
+    LEFT JOIN approval_decisions ad ON ad.request_id = r.request_id
+    LEFT JOIN users approver ON approver.user_id = ad.approver_id
+    WHERE ${statusCondition} ${dateCondition}
+    ${orderClause}
+  `;
+
+  const countsQuery = `
+    SELECT
+      COUNT(*) FILTER (WHERE r.request_status = 'pending' AND (r.review_queue_date IS NULL OR r.review_queue_date <= $1::date))::int AS ready_count,
+      COUNT(*) FILTER (WHERE r.request_status = 'pending' AND r.review_queue_date > $1::date)::int AS scheduled_count,
+      COUNT(*) FILTER (WHERE r.request_status IN ('approved', 'rejected'))::int AS history_count
+    FROM loan_requests r
+  `;
+
+  const [{ rows }, { rows: countRows }] = await Promise.all([
+    db.query(query, params),
+    db.query(countsQuery, [today]),
+  ]);
+
+  const nowTime = now.getTime();
+  const items = rows.map((r) => {
+    const startTime = new Date(r.planned_start_at).getTime();
+    const endTime = new Date(r.planned_end_at).getTime();
+    const durationDays = Math.max(1, Math.round((endTime - startTime) / DAY_MS));
+
+    return {
+      ...r,
+      duration_days: durationDays,
+      is_expired: endTime <= nowTime,
+      is_started: startTime <= nowTime && endTime > nowTime,
+    };
+  });
+
+  return {
+    items,
+    counts: {
+      ready: countRows[0]?.ready_count || 0,
+      scheduled: countRows[0]?.scheduled_count || 0,
+      history: countRows[0]?.history_count || 0,
+    },
+    today,
+  };
+}
+
+/**
+ * Menyetujui pengajuan peminjaman oleh Kadep.
+ *
+ * Aturan:
+ *   - Hanya pengajuan berstatus 'pending' yang bisa disetujui (selain itu -> 409).
+ *   - Pengajuan yang planned_end_at-nya sudah lewat tidak boleh disetujui (409, sarankan tolak).
+ *   - Pengajuan yang planned_start_at-nya sudah lewat tapi belum berakhir masih boleh disetujui.
+ *   - Persetujuan TIDAK mengubah items.availability_status.
+ *   - Jika terjadi bentrok dengan approved lain -> DB melempar 23P01 -> tangkap dan lempar 409.
+ */
+export async function approveLoanRequest({ requestId, approverId, now = new Date() }) {
+  const reqId = Number(requestId);
+  if (!Number.isInteger(reqId) || reqId <= 0) {
+    throw httpError(400, "ID pengajuan tidak valid");
+  }
+
+  const client = await db.connect();
+  let loan = null;
+  try {
+    await client.query("BEGIN");
+
+    // Kunci baris pengajuan peminjaman
+    const { rows: loanRows } = await client.query(
+      `SELECT r.request_id, r.borrower_id, r.item_id, r.purpose,
+              r.planned_start_at, r.planned_end_at, r.request_status,
+              i.item_name, i.availability_status
+         FROM loan_requests r
+         JOIN items i ON i.item_id = r.item_id
+        WHERE r.request_id = $1
+          FOR UPDATE OF r`,
+      [reqId]
+    );
+
+    loan = loanRows[0];
+    if (!loan) {
+      throw httpError(404, "Pengajuan peminjaman tidak ditemukan");
+    }
+
+    if (loan.request_status !== "pending") {
+      throw httpError(
+        409,
+        `Pengajuan tidak dapat diputuskan karena sudah berstatus '${loan.request_status}'`
+      );
+    }
+
+    const plannedEnd = new Date(loan.planned_end_at);
+    if (plannedEnd.getTime() <= now.getTime()) {
+      throw httpError(
+        409,
+        "Pengajuan tidak dapat disetujui karena batas waktu peminjaman sudah lewat. Silakan tolak pengajuan ini."
+      );
+    }
+
+    // Ubah status pengajuan menjadi 'approved'
+    await client.query(
+      `UPDATE loan_requests
+          SET request_status = 'approved'
+        WHERE request_id = $1`,
+      [reqId]
+    );
+
+    // Simpan keputusan ke approval_decisions
+    await client.query(
+      `INSERT INTO approval_decisions (request_id, approver_id, decision, reason)
+       VALUES ($1, $2, 'approved', NULL)`,
+      [reqId, approverId]
+    );
+
+    // Catat audit log
+    await client.query(
+      `INSERT INTO audit_logs (actor_user_id, action_type, entity_type, entity_id, details)
+       VALUES ($1, 'approve_loan_request', 'loan_request', $2, $3)`,
+      [
+        approverId,
+        reqId,
+        JSON.stringify({
+          item_id: loan.item_id,
+          item_name: loan.item_name,
+          borrower_id: loan.borrower_id,
+          planned_start_at: loan.planned_start_at,
+          planned_end_at: loan.planned_end_at,
+        }),
+      ]
+    );
+
+    await client.query("COMMIT");
+
+    return {
+      request_id: reqId,
+      request_status: "approved",
+      item_id: loan.item_id,
+      item_name: loan.item_name,
+      planned_start_at: loan.planned_start_at,
+      planned_end_at: loan.planned_end_at,
+    };
+  } catch (err) {
+    await client.query("ROLLBACK");
+
+    if (isApprovedOverlapError(err)) {
+      let conflicts = [];
+      if (loan) {
+        const { rows: conflictRows } = await db.query(
+          `SELECT request_status, planned_start_at, planned_end_at
+             FROM loan_requests
+            WHERE item_id = $1
+              AND request_status = 'approved'
+              AND tstzrange(planned_start_at, planned_end_at) && tstzrange($2::timestamptz, $3::timestamptz)
+            ORDER BY planned_start_at`,
+          [loan.item_id, loan.planned_start_at, loan.planned_end_at]
+        );
+        conflicts = conflictRows.map((r) => ({
+          status: r.request_status,
+          start: r.planned_start_at,
+          end: r.planned_end_at,
+        }));
+      }
+
+      throw httpError(
+        409,
+        "Jadwal bentrok dengan pengajuan lain yang sudah disetujui",
+        { conflicts }
+      );
+    }
+
+    throw err;
+  } finally {
+    client.release();
+  }
+}
+
+/**
+ * Menolak pengajuan peminjaman oleh Kadep.
+ *
+ * Aturan:
+ *   - Menolak WAJIB menyertakan alasan (trim, tidak kosong, maks 500 karakter).
+ *   - Hanya pengajuan berstatus 'pending' yang bisa ditolak (selain itu -> 409).
+ */
+export async function rejectLoanRequest({ requestId, approverId, reason, now = new Date() }) {
+  const reqId = Number(requestId);
+  if (!Number.isInteger(reqId) || reqId <= 0) {
+    throw httpError(400, "ID pengajuan tidak valid");
+  }
+
+  const text = typeof reason === "string" ? reason.trim() : "";
+  if (!text) {
+    throw httpError(400, "Alasan penolakan wajib diisi");
+  }
+  if (text.length > 500) {
+    throw httpError(400, "Alasan penolakan maksimal 500 karakter");
+  }
+
+  const client = await db.connect();
+  let loan = null;
+  try {
+    await client.query("BEGIN");
+
+    // Kunci baris pengajuan peminjaman
+    const { rows: loanRows } = await client.query(
+      `SELECT r.request_id, r.borrower_id, r.item_id, r.purpose,
+              r.planned_start_at, r.planned_end_at, r.request_status,
+              i.item_name
+         FROM loan_requests r
+         JOIN items i ON i.item_id = r.item_id
+        WHERE r.request_id = $1
+          FOR UPDATE OF r`,
+      [reqId]
+    );
+
+    loan = loanRows[0];
+    if (!loan) {
+      throw httpError(404, "Pengajuan peminjaman tidak ditemukan");
+    }
+
+    if (loan.request_status !== "pending") {
+      throw httpError(
+        409,
+        `Pengajuan tidak dapat diputuskan karena sudah berstatus '${loan.request_status}'`
+      );
+    }
+
+    // Ubah status pengajuan menjadi 'rejected'
+    await client.query(
+      `UPDATE loan_requests
+          SET request_status = 'rejected'
+        WHERE request_id = $1`,
+      [reqId]
+    );
+
+    // Simpan keputusan ke approval_decisions
+    await client.query(
+      `INSERT INTO approval_decisions (request_id, approver_id, decision, reason)
+       VALUES ($1, $2, 'rejected', $3)`,
+      [reqId, approverId, text]
+    );
+
+    // Catat audit log
+    await client.query(
+      `INSERT INTO audit_logs (actor_user_id, action_type, entity_type, entity_id, details)
+       VALUES ($1, 'reject_loan_request', 'loan_request', $2, $3)`,
+      [
+        approverId,
+        reqId,
+        JSON.stringify({
+          item_id: loan.item_id,
+          item_name: loan.item_name,
+          borrower_id: loan.borrower_id,
+          reason: text,
+        }),
+      ]
+    );
+
+    await client.query("COMMIT");
+
+    return {
+      request_id: reqId,
+      request_status: "rejected",
+      item_id: loan.item_id,
+      item_name: loan.item_name,
+      reason: text,
+    };
+  } catch (err) {
+    await client.query("ROLLBACK");
+    throw err;
+  } finally {
+    client.release();
+  }
+}
+
+/**
+ * Helper router untuk memutuskan pengajuan (approved/rejected).
+ */
+export async function decideLoanRequest({ requestId, approverId, decision, reason, now = new Date() }) {
+  if (decision === "approved") {
+    return approveLoanRequest({ requestId, approverId, now });
+  }
+  if (decision === "rejected") {
+    return rejectLoanRequest({ requestId, approverId, reason, now });
+  }
+  throw httpError(400, "Keputusan tidak valid (harus 'approved' atau 'rejected')");
+}

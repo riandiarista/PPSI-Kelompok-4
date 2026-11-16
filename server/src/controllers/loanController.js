@@ -49,3 +49,100 @@ export async function createLoanRequest(req, res, next) {
     next(err);
   }
 }
+
+// GET /api/loans/queue?tab=queue|scheduled|history|all
+export async function getApprovalQueue(req, res, next) {
+  try {
+    const tab = String(req.query.tab || "queue").toLowerCase();
+    const result = await loanService.getApprovalQueue({
+      tab,
+      actorUserId: req.user.user_id,
+    });
+    res.json({
+      success: true,
+      data: result.items,
+      counts: result.counts,
+      today: result.today,
+    });
+  } catch (err) {
+    next(err);
+  }
+}
+
+// POST /api/loans/:id/approve
+export async function approveLoanRequest(req, res, next) {
+  try {
+    const requestId = Number(req.params.id);
+    const result = await loanService.approveLoanRequest({
+      requestId,
+      approverId: req.user.user_id,
+    });
+    res.json({
+      success: true,
+      message: "Pengajuan peminjaman berhasil disetujui",
+      data: result,
+    });
+  } catch (err) {
+    if (err.status === 409) {
+      return res.status(409).json({
+        success: false,
+        message: err.message,
+        data: { conflicts: err.conflicts || [] },
+      });
+    }
+    if (err.status === 400 || err.status === 404) {
+      return res.status(err.status).json({
+        success: false,
+        message: err.message,
+      });
+    }
+    next(err);
+  }
+}
+
+// POST /api/loans/:id/reject
+export async function rejectLoanRequest(req, res, next) {
+  try {
+    const requestId = Number(req.params.id);
+    const { reason } = req.body || {};
+    const result = await loanService.rejectLoanRequest({
+      requestId,
+      approverId: req.user.user_id,
+      reason,
+    });
+    res.json({
+      success: true,
+      message: "Pengajuan peminjaman berhasil ditolak",
+      data: result,
+    });
+  } catch (err) {
+    if (err.status === 409) {
+      return res.status(409).json({
+        success: false,
+        message: err.message,
+      });
+    }
+    if (err.status === 400 || err.status === 404) {
+      return res.status(err.status).json({
+        success: false,
+        message: err.message,
+      });
+    }
+    next(err);
+  }
+}
+
+// POST /api/loans/:id/decision  { decision: 'approved' | 'rejected', reason }
+export async function decideLoanRequest(req, res, next) {
+  const { decision, reason } = req.body || {};
+  if (decision === "approved") {
+    return approveLoanRequest(req, res, next);
+  }
+  if (decision === "rejected") {
+    return rejectLoanRequest(req, res, next);
+  }
+  return res.status(400).json({
+    success: false,
+    message: "Keputusan harus berupa 'approved' atau 'rejected'",
+  });
+}

@@ -8,6 +8,7 @@ import LoginPage from './pages/LoginPage'
 import KelolaAkunPage from './pages/KelolaAkunPage'
 import KelolaInventarisPage from './pages/KelolaInventarisPage'
 import KatalogBarangPage from './pages/KatalogBarangPage'
+import AntreanPersetujuanPage from './pages/AntreanPersetujuanPage'
 import PlaceholderPage from './pages/PlaceholderPage'
 
 export default function App() {
@@ -46,6 +47,8 @@ function AppRoutes() {
                     <KelolaInventarisPage />
                   ) : item.path === '/peminjam/katalog' ? (
                     <KatalogBarangPage />
+                  ) : item.path === '/kadep/antrean' ? (
+                    <AntreanPersetujuanPage />
                   ) : (
                     <PlaceholderPage title={item.label} />
                   )

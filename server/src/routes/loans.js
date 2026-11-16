@@ -14,4 +14,17 @@ router.get("/availability", authorize(...ACCESS.lihatBarang), loanController.che
 // POST /api/loans/request -> ajukan peminjaman (hanya Peminjam)
 router.post("/request", authorize(...ACCESS.ajukanPeminjaman), loanController.createLoanRequest);
 
+// GET /api/loans/queue -> antrean persetujuan peminjaman (hanya Kadep)
+router.get("/queue", authorize(...ACCESS.approvalPeminjaman), loanController.getApprovalQueue);
+
+// POST /api/loans/:id/approve & reject -> keputusan persetujuan peminjaman (hanya Kadep)
+router.post("/:id/approve", authorize(...ACCESS.approvalPeminjaman), loanController.approveLoanRequest);
+router.post("/:id/reject", authorize(...ACCESS.approvalPeminjaman), loanController.rejectLoanRequest);
+router.post("/:id/decision", authorize(...ACCESS.approvalPeminjaman), loanController.decideLoanRequest);
+
+// Alias dengan prefix /requests/:id/...
+router.post("/requests/:id/approve", authorize(...ACCESS.approvalPeminjaman), loanController.approveLoanRequest);
+router.post("/requests/:id/reject", authorize(...ACCESS.approvalPeminjaman), loanController.rejectLoanRequest);
+router.post("/requests/:id/decision", authorize(...ACCESS.approvalPeminjaman), loanController.decideLoanRequest);
+
 export default router;
