@@ -9,6 +9,8 @@ import KelolaAkunPage from './pages/KelolaAkunPage'
 import KelolaInventarisPage from './pages/KelolaInventarisPage'
 import KatalogBarangPage from './pages/KatalogBarangPage'
 import AntreanPersetujuanPage from './pages/AntreanPersetujuanPage'
+import SerahTerimaPage from './pages/SerahTerimaPage'
+import PengembalianPage from './pages/PengembalianPage'
 import PlaceholderPage from './pages/PlaceholderPage'
 
 export default function App() {
@@ -49,6 +51,10 @@ function AppRoutes() {
                     <KatalogBarangPage />
                   ) : item.path === '/kadep/antrean' ? (
                     <AntreanPersetujuanPage />
+                  ) : item.path === '/tendik/serah-terima' ? (
+                    <SerahTerimaPage />
+                  ) : item.path === '/tendik/pengembalian' ? (
+                    <PengembalianPage />
                   ) : (
                     <PlaceholderPage title={item.label} />
                   )
