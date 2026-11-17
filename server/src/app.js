@@ -7,6 +7,7 @@ import adminUserRoutes from "./routes/adminUsers.js";
 import inventoryRoutes from "./routes/inventory.js";
 import loanRoutes from "./routes/loans.js";
 import handoverRoutes from "./routes/handover.js";
+import pointsRoutes from "./routes/points.js";
 
 const app = express();
 
@@ -52,6 +53,7 @@ app.use("/api/admin", adminUserRoutes);
 app.use("/api/inventory", inventoryRoutes);
 app.use("/api/loans", loanRoutes);
 app.use("/api/handover", handoverRoutes);
+app.use("/api/points", pointsRoutes);
 
 // 404 handler
 app.use((req, res) => {

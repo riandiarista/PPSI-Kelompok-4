@@ -11,6 +11,7 @@ import KatalogBarangPage from './pages/KatalogBarangPage'
 import AntreanPersetujuanPage from './pages/AntreanPersetujuanPage'
 import SerahTerimaPage from './pages/SerahTerimaPage'
 import PengembalianPage from './pages/PengembalianPage'
+import PoinRewardPage from './pages/PoinRewardPage'
 import PlaceholderPage from './pages/PlaceholderPage'
 
 export default function App() {
@@ -49,6 +50,8 @@ function AppRoutes() {
                     <KelolaInventarisPage />
                   ) : item.path === '/peminjam/katalog' ? (
                     <KatalogBarangPage />
+                  ) : item.path === '/peminjam/poin' ? (
+                    <PoinRewardPage />
                   ) : item.path === '/kadep/antrean' ? (
                     <AntreanPersetujuanPage />
                   ) : item.path === '/tendik/serah-terima' ? (

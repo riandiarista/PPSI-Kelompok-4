@@ -30,10 +30,10 @@ export const POINT_RULES = Object.freeze({
 });
 
 export const DISCIPLINE_LEVELS = [
-  { name: "gold",     min: 300 },
-  { name: "silver",   min: 150 },
-  { name: "bronze",   min: 50  },
-  { name: "beginner", min: 0   },
+  { name: "teladan",    min: 70 },
+  { name: "terpercaya", min: 50 },
+  { name: "pemula",     min: 30 },
+  { name: "beginner",   min: 0  },
 ];
 
 export function calculateLevel(balance) {
