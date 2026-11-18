@@ -16,6 +16,8 @@ router.post("/request", authorize(...ACCESS.ajukanPeminjaman), loanController.cr
 
 // GET /api/loans/queue -> antrean persetujuan peminjaman (hanya Kadep)
 router.get("/queue", authorize(...ACCESS.approvalPeminjaman), loanController.getApprovalQueue);
+router.get("/history", authorize(...ACCESS.lihatLaporan), loanController.getLoanHistory);
+router.get("/late-report", authorize(...ACCESS.lihatLaporan), loanController.getLateLoanReport);
 
 // POST /api/loans/:id/approve & reject -> keputusan persetujuan peminjaman (hanya Kadep)
 router.post("/:id/approve", authorize(...ACCESS.approvalPeminjaman), loanController.approveLoanRequest);

@@ -399,6 +399,143 @@ export async function getApprovalQueue({ tab = "queue", actorUserId, now = new D
   };
 }
 
+export async function getLoanHistory({ search = "", sortBy = "returned_at", sortOrder = "desc" } = {}) {
+  const query = String(search || "").trim();
+  if (query.length > 100) {
+    throw httpError(400, "Pencarian maksimal 100 karakter");
+  }
+
+  const sortColumns = {
+    returned_at: "ri.returned_at",
+    handover_at: "lt.handover_at",
+    item_name: "i.item_name",
+    borrower_name: "u.full_name",
+    late_days: "ri.late_days",
+  };
+  const column = sortColumns[sortBy];
+  const direction = String(sortOrder).toLowerCase();
+  if (!column) throw httpError(400, "Kolom pengurutan riwayat tidak valid");
+  if (!["asc", "desc"].includes(direction)) {
+    throw httpError(400, "Arah pengurutan harus asc atau desc");
+  }
+
+  const params = [];
+  let searchCondition = "";
+  if (query) {
+    params.push(`%${query}%`);
+    searchCondition = `AND (
+      i.item_name ILIKE $1
+      OR c.category_name ILIKE $1
+      OR u.full_name ILIKE $1
+      OR u.email ILIKE $1
+    )`;
+  }
+
+  const { rows } = await db.query(
+    `SELECT lt.loan_id, r.request_id, r.borrower_id, r.item_id,
+            i.item_name, i.category_id, c.category_name,
+            u.full_name AS borrower_name, u.email AS borrower_email,
+            lt.handover_at, lt.due_at, lt.transaction_status,
+            ri.returned_at, ri.late_days, ri.return_condition, ri.notes
+       FROM loan_transactions lt
+       JOIN loan_requests r ON r.request_id = lt.request_id
+       JOIN items i ON i.item_id = r.item_id
+       JOIN item_categories c ON c.category_id = i.category_id
+       JOIN users u ON u.user_id = r.borrower_id
+       JOIN return_inspections ri ON ri.loan_id = lt.loan_id
+      WHERE lt.transaction_status = 'returned'
+        ${searchCondition}
+      ORDER BY ${column} ${direction.toUpperCase()} NULLS LAST,
+               lt.loan_id DESC`,
+    params
+  );
+  return rows;
+}
+
+export async function getLateLoanReport({
+  month = todayWib().slice(0, 7),
+  search = "",
+  sortBy = "due_at",
+  sortOrder = "asc",
+} = {}) {
+  const selectedMonth = String(month || "");
+  if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(selectedMonth)) {
+    throw httpError(400, "Periode harus menggunakan format YYYY-MM");
+  }
+
+  const query = String(search || "").trim();
+  if (query.length > 100) {
+    throw httpError(400, "Pencarian maksimal 100 karakter");
+  }
+
+  const sortColumns = {
+    due_at: "lt.due_at",
+    item_name: "i.item_name",
+    borrower_name: "u.full_name",
+    late_days: `CASE
+      WHEN ri.inspection_id IS NULL
+        THEN CEIL(EXTRACT(EPOCH FROM (NOW() - lt.due_at)) / 86400)::int
+      ELSE ri.late_days
+    END`,
+  };
+  const column = sortColumns[sortBy];
+  const direction = String(sortOrder).toLowerCase();
+  if (!column) throw httpError(400, "Kolom pengurutan rekap keterlambatan tidak valid");
+  if (!["asc", "desc"].includes(direction)) {
+    throw httpError(400, "Arah pengurutan harus asc atau desc");
+  }
+
+  const [year, monthNumber] = selectedMonth.split("-").map(Number);
+  const startAt = new Date(Date.UTC(year, monthNumber - 1, 1) - 7 * 60 * 60 * 1000);
+  const endAt = new Date(Date.UTC(year, monthNumber, 1) - 7 * 60 * 60 * 1000);
+  const params = [startAt, endAt];
+  let searchCondition = "";
+  if (query) {
+    params.push(`%${query}%`);
+    searchCondition = `AND (
+      i.item_name ILIKE $3
+      OR c.category_name ILIKE $3
+      OR u.full_name ILIKE $3
+      OR u.email ILIKE $3
+    )`;
+  }
+
+  const { rows } = await db.query(
+    `SELECT lt.loan_id, r.request_id, r.borrower_id, r.item_id,
+            i.item_name, c.category_name,
+            u.full_name AS borrower_name, u.email AS borrower_email,
+            lt.handover_at, lt.due_at, lt.transaction_status,
+            ri.returned_at, ri.return_condition,
+            CASE
+              WHEN ri.inspection_id IS NOT NULL THEN ri.late_days
+              ELSE CEIL(EXTRACT(EPOCH FROM (NOW() - lt.due_at)) / 86400)::int
+            END AS late_days,
+            (ri.inspection_id IS NOT NULL) AS is_returned
+       FROM loan_transactions lt
+       JOIN loan_requests r ON r.request_id = lt.request_id
+       JOIN items i ON i.item_id = r.item_id
+       JOIN item_categories c ON c.category_id = i.category_id
+       JOIN users u ON u.user_id = r.borrower_id
+       LEFT JOIN return_inspections ri ON ri.loan_id = lt.loan_id
+      WHERE lt.due_at >= $1
+        AND lt.due_at < $2
+        AND (
+          (ri.inspection_id IS NOT NULL AND ri.late_days > 0)
+          OR (
+            ri.inspection_id IS NULL
+            AND lt.transaction_status IN ('borrowed', 'overdue')
+            AND lt.due_at < NOW()
+          )
+        )
+        ${searchCondition}
+      ORDER BY ${column} ${direction.toUpperCase()} NULLS LAST,
+               lt.loan_id DESC`,
+    params
+  );
+
+  return { month: selectedMonth, items: rows };
+}
+
 /**
  * Menyetujui pengajuan peminjaman oleh Kadep.
  *

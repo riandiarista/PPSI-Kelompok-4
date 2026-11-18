@@ -19,6 +19,7 @@ before(async () => {
   app.use(fakeAuthenticate);
   app.get("/approval", authorize(...ACCESS.approvalPeminjaman), (req, res) => res.json({ ok: true }));
   app.get("/laporan", authorize(ROLES.TENDIK, ROLES.KADEP), (req, res) => res.json({ ok: true }));
+  app.get("/audit-log", authorize(...ACCESS.lihatAuditLog), (req, res) => res.json({ ok: true }));
 
   await new Promise((resolve) => {
     server = app.listen(0, resolve);
@@ -46,6 +47,12 @@ test("role yang tidak diizinkan -> 403", async () => {
   assert.equal((await call("/approval", ROLES.PEMINJAM)).status, 403);
   assert.equal((await call("/approval", ROLES.TENDIK)).status, 403);
   assert.equal((await call("/laporan", ROLES.PEMINJAM)).status, 403);
+});
+
+test("log aktivitas dapat diakses Tendik dan Kadep", async () => {
+  assert.equal((await call("/audit-log", ROLES.TENDIK)).status, 200);
+  assert.equal((await call("/audit-log", ROLES.KADEP)).status, 200);
+  assert.equal((await call("/audit-log", ROLES.PEMINJAM)).status, 403);
 });
 
 test("role palsu di token -> 403", async () => {

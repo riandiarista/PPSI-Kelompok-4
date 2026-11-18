@@ -33,5 +33,5 @@ export const ACCESS = Object.freeze({
 
   // Laporan & audit
   lihatLaporan: [TENDIK, KADEP],
-  lihatAuditLog: [KADEP],
+  lihatAuditLog: [TENDIK, KADEP],
 });

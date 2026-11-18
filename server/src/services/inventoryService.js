@@ -238,7 +238,7 @@ export async function getItems({
 
   if (search && search.trim()) {
     params.push(`%${search.trim()}%`);
-    conditions.push(`(i.item_name ILIKE $${params.length})`);
+    conditions.push(`(i.item_name ILIKE $${params.length} OR c.category_name ILIKE $${params.length})`);
   }
 
   if (category_id && category_id !== "all") {

@@ -8,6 +8,7 @@ import inventoryRoutes from "./routes/inventory.js";
 import loanRoutes from "./routes/loans.js";
 import handoverRoutes from "./routes/handover.js";
 import pointsRoutes from "./routes/points.js";
+import auditLogRoutes from "./routes/auditLogs.js";
 
 const app = express();
 
@@ -54,6 +55,7 @@ app.use("/api/inventory", inventoryRoutes);
 app.use("/api/loans", loanRoutes);
 app.use("/api/handover", handoverRoutes);
 app.use("/api/points", pointsRoutes);
+app.use("/api/audit-logs", auditLogRoutes);
 
 // 404 handler
 app.use((req, res) => {

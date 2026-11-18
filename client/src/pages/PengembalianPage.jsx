@@ -2,7 +2,6 @@ import { useEffect, useMemo, useState, useCallback } from 'react'
 import Icon from '../components/Icon'
 import { api } from '../lib/api'
 
-// ─── Helpers ─────────────────────────────────────────────────────────────────
 function formatDateTime(isoStr) {
   if (!isoStr) return '-'
   try {
@@ -13,22 +12,12 @@ function formatDateTime(isoStr) {
   } catch { return isoStr }
 }
 
-function formatTanggal(dateStr) {
-  if (!dateStr) return '-'
-  try {
-    const raw = String(dateStr).slice(0, 10)
-    return new Intl.DateTimeFormat('id-ID', {
-      day: 'numeric', month: 'short', year: 'numeric', timeZone: 'UTC',
-    }).format(new Date(`${raw}T12:00:00Z`))
-  } catch { return dateStr }
-}
-
 // Kondisi pengembalian
 const RETURN_CONDITIONS = [
   {
     value: 'good',
     label: 'Baik',
-    desc:  'Barang kembali dalam kondisi sempurna, tidak ada kerusakan.',
+    desc:  'Barang kembali tanpa kerusakan. Status setelah dikembalikan: tersedia.',
     color: 'border-emerald-400 bg-emerald-50 text-emerald-800',
     ring:  'ring-2 ring-emerald-400',
     icon:  'check',
@@ -36,7 +25,7 @@ const RETURN_CONDITIONS = [
   {
     value: 'minor_damage',
     label: 'Kerusakan Ringan',
-    desc:  'Terdapat goresan, noda, atau kerusakan kecil yang tidak mempengaruhi fungsi.',
+    desc:  'Terdapat kerusakan kecil. Status setelah dikembalikan: perbaikan.',
     color: 'border-amber-400 bg-amber-50 text-amber-800',
     ring:  'ring-2 ring-amber-400',
     icon:  'alert-circle',
@@ -44,7 +33,7 @@ const RETURN_CONDITIONS = [
   {
     value: 'major_damage',
     label: 'Kerusakan Besar / Hilang',
-    desc:  'Barang rusak parah, tidak dapat digunakan, atau tidak dikembalikan.',
+    desc:  'Barang rusak parah atau hilang. Status setelah dikembalikan: tidak tersedia.',
     color: 'border-red-400 bg-red-50 text-red-800',
     ring:  'ring-2 ring-red-400',
     icon:  'x-circle',
@@ -133,13 +122,13 @@ export default function PengembalianPage() {
   }, [items, search])
 
   // Fetch preview poin ketika kondisi atau waktu berubah
-  const fetchPreview = useCallback(async (loanId, condition, returnedAt) => {
-    if (!condition) return
+  const fetchPreview = useCallback(async (item, condition, returnedAt) => {
+    if (!item || !condition) return
     setReturnModal((prev) => ({ ...prev, previewLoading: true, preview: null }))
     try {
       const qs = new URLSearchParams({ return_condition: condition })
       if (returnedAt) qs.set('returned_at', returnedAt)
-      const res = await api(`/handover/returns/${loanId}/preview?${qs.toString()}`)
+      const res = await api(`/handover/returns/${item.loan_id}/preview?${qs.toString()}`)
       setReturnModal((prev) => ({ ...prev, preview: res.data, previewLoading: false }))
     } catch {
       setReturnModal((prev) => ({ ...prev, previewLoading: false }))
@@ -151,7 +140,7 @@ export default function PengembalianPage() {
     setReturnModal((prev) => {
       const updated = { ...prev, condition, preview: null, previewLoading: false }
       if (prev.item) {
-        fetchPreview(prev.item.loan_id, condition, prev.returnedAt || null)
+        fetchPreview(prev.item, condition, prev.returnedAt || null)
       }
       return updated
     })
@@ -161,7 +150,7 @@ export default function PengembalianPage() {
     setReturnModal((prev) => {
       const updated = { ...prev, returnedAt: val, preview: null }
       if (prev.item && prev.condition) {
-        fetchPreview(prev.item.loan_id, prev.condition, val || null)
+        fetchPreview(prev.item, prev.condition, val || null)
       }
       return updated
     })
@@ -205,7 +194,7 @@ export default function PengembalianPage() {
   }), [items])
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-6 font-sans">
       {/* Toast */}
       {toast.show && (
         <div className={`fixed bottom-5 right-5 z-50 flex items-center gap-3 rounded-[12px] px-4 py-3 text-[13.5px] font-medium shadow-lg transition-all ${
@@ -366,7 +355,7 @@ export default function PengembalianPage() {
                           condition: '', notes: '', returnedAt: '',
                           preview: null, previewLoading: false, confirmStep: false,
                         })}
-                        className="inline-flex items-center gap-1.5 rounded-[8px] bg-[#14532D] px-3 py-1.5 text-[12px] font-medium text-white shadow-xs transition hover:bg-[#0f3f22]"
+                        className="inline-flex items-center gap-1.5 rounded-[8px] bg-[#1E3F70] px-3 py-1.5 text-[12px] font-medium text-white shadow-xs transition hover:bg-[#162e55]"
                       >
                         <Icon name="check" size={14} />
                         Proses
@@ -389,7 +378,7 @@ export default function PengembalianPage() {
             {/* Header */}
             <div className="flex items-center justify-between border-b border-neutral-200/80 px-6 py-4">
               <div className="flex items-center gap-2">
-                <span className="flex h-8 w-8 items-center justify-center rounded-full bg-emerald-100 text-emerald-700">
+                <span className="flex h-8 w-8 items-center justify-center rounded-full bg-blue-100 text-[#1E3F70]">
                   <Icon name="check" size={18} />
                 </span>
                 <h3 className="text-[16px] font-bold text-[#14231F]">Konfirmasi Pengembalian</h3>
@@ -435,7 +424,7 @@ export default function PengembalianPage() {
                   type="datetime-local"
                   value={returnModal.returnedAt ? returnModal.returnedAt.slice(0, 16) : ''}
                   onChange={(e) => handleReturnedAtChange(e.target.value ? new Date(e.target.value).toISOString() : '')}
-                  className="w-full rounded-[10px] border border-neutral-300 px-3 py-2 text-[13px] text-[#14231F] focus:border-[#14532D] focus:outline-none focus:ring-2 focus:ring-[#14532D]/15"
+                  className="w-full rounded-[10px] border border-neutral-300 px-3 py-2 text-[13px] text-[#14231F] focus:border-[#1E3F70] focus:outline-none focus:ring-2 focus:ring-[#1E3F70]/15"
                 />
               </div>
 
@@ -476,7 +465,7 @@ export default function PengembalianPage() {
                   value={returnModal.notes}
                   onChange={(e) => setReturnModal((prev) => ({ ...prev, notes: e.target.value }))}
                   placeholder="Contoh: Terdapat goresan di sudut kanan bawah."
-                  className="w-full rounded-[10px] border border-neutral-300 px-3 py-2 text-[13px] text-[#14231F] placeholder-neutral-400 focus:border-[#14532D] focus:outline-none focus:ring-2 focus:ring-[#14532D]/15 resize-none"
+                  className="w-full rounded-[10px] border border-neutral-300 px-3 py-2 text-[13px] text-[#14231F] placeholder-neutral-400 focus:border-[#1E3F70] focus:outline-none focus:ring-2 focus:ring-[#1E3F70]/15 resize-none"
                 />
               </div>
 
@@ -566,7 +555,7 @@ export default function PengembalianPage() {
                 type="button"
                 onClick={handleConfirmReturn}
                 disabled={returnModal.loading || !returnModal.condition}
-                className="flex items-center gap-1.5 rounded-[10px] bg-[#14532D] px-4 py-2 text-[13px] font-semibold text-white shadow-xs hover:bg-[#0f3f22] disabled:cursor-not-allowed disabled:bg-neutral-300"
+                className="flex items-center gap-1.5 rounded-[10px] bg-[#1E3F70] px-4 py-2 text-[13px] font-semibold text-white shadow-xs hover:bg-[#162e55] disabled:cursor-not-allowed disabled:bg-neutral-300"
               >
                 <Icon name={returnModal.loading ? 'refresh' : 'check'} size={15} className={returnModal.loading ? 'animate-spin' : ''} />
                 {returnModal.loading ? 'Menyimpan...' : 'Konfirmasi Pengembalian'}

@@ -69,6 +69,35 @@ export async function getApprovalQueue(req, res, next) {
   }
 }
 
+// GET /api/loans/history?search=&sort_by=returned_at&sort_order=desc
+export async function getLoanHistory(req, res, next) {
+  try {
+    const items = await loanService.getLoanHistory({
+      search: req.query.search,
+      sortBy: req.query.sort_by || "returned_at",
+      sortOrder: req.query.sort_order || "desc",
+    });
+    res.json({ success: true, data: items });
+  } catch (err) {
+    next(err);
+  }
+}
+
+// GET /api/loans/late-report?month=YYYY-MM
+export async function getLateLoanReport(req, res, next) {
+  try {
+    const report = await loanService.getLateLoanReport({
+      month: req.query.month,
+      search: req.query.search,
+      sortBy: req.query.sort_by || "due_at",
+      sortOrder: req.query.sort_order || "asc",
+    });
+    res.json({ success: true, data: report });
+  } catch (err) {
+    next(err);
+  }
+}
+
 // POST /api/loans/:id/approve
 export async function approveLoanRequest(req, res, next) {
   try {

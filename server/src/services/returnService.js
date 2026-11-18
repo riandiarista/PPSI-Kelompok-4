@@ -1,15 +1,4 @@
-/**
- * returnService.js — UC-14: Konfirmasi Pengembalian dan Kondisi Barang
- *                   (KF-14, KF-15, KF-19, KF-20, KF-25)
- *
- * Tanggung jawab:
- *  - Menampilkan daftar barang yang sedang dipinjam (transaction_status = 'borrowed').
- *  - Memproses pengembalian: mencatat ke return_inspections, menutup transaksi.
- *  - Mengembalikan availability_status item → 'available'.
- *  - Menghitung poin berdasarkan keterlambatan dan kondisi fisik.
- *  - Memperbarui user_gamifications (saldo + level), tidak boleh negatif.
- *  - Mencatat point_transactions dan audit_logs (KF-25).
- */
+
 
 import db from "../config/db.js";
 
@@ -41,6 +30,24 @@ export function calculateLevel(balance) {
     if (balance >= lvl.min) return lvl.name;
   }
   return "beginner";
+}
+
+export function calculateLateDays(dueAt, returnedAt) {
+  const dueMs = new Date(dueAt).getTime();
+  const returnedMs = new Date(returnedAt).getTime();
+  if (!Number.isFinite(dueMs) || !Number.isFinite(returnedMs)) {
+    throw httpError(400, "Format waktu pengembalian tidak valid");
+  }
+  return Math.max(0, Math.ceil((returnedMs - dueMs) / (24 * 60 * 60 * 1000)));
+}
+
+export function getItemStatusAfterReturn(returnCondition) {
+  const statusByCondition = {
+    good: "available",
+    minor_damage: "maintenance",
+    major_damage: "unavailable",
+  };
+  return statusByCondition[returnCondition];
 }
 
 /**
@@ -128,9 +135,7 @@ export async function getActiveLoanTransactions({ now = new Date() } = {}) {
   return rows.map((r) => {
     const dueMs = new Date(r.due_at).getTime();
     const isOverdue = dueMs < nowMs;
-    const lateDaysEstimate = isOverdue
-      ? Math.ceil((nowMs - dueMs) / (24 * 60 * 60 * 1000))
-      : 0;
+    const lateDaysEstimate = calculateLateDays(r.due_at, now);
     return {
       ...r,
       is_overdue:          isOverdue,
@@ -168,8 +173,7 @@ export async function previewReturnPoints({ loanId, returnedAt, returnCondition 
 
   const returnTime = returnedAt ? new Date(returnedAt) : new Date();
   const dueTime    = new Date(tx.due_at);
-  const rawLateDays = Math.max(0, (returnTime.getTime() - dueTime.getTime()) / (24 * 60 * 60 * 1000));
-  const lateDays    = Math.ceil(rawLateDays);
+  const lateDays = calculateLateDays(dueTime, returnTime);
 
   const { delta, breakdown } = calculatePointDelta({ lateDays, returnCondition });
 
@@ -261,9 +265,8 @@ export async function confirmReturn({
     }
 
     // Hitung keterlambatan
-    const dueTime    = new Date(tx.due_at);
-    const rawLateDays = Math.max(0, (returnTime.getTime() - dueTime.getTime()) / (24 * 60 * 60 * 1000));
-    const lateDays    = Math.ceil(rawLateDays);
+    const lateDays = calculateLateDays(tx.due_at, returnTime);
+    const itemStatus = getItemStatusAfterReturn(returnCondition);
 
     // Hitung poin
     const { delta: rawDelta, breakdown } = calculatePointDelta({ lateDays, returnCondition });
@@ -297,10 +300,13 @@ export async function confirmReturn({
       [id]
     );
 
-    // 3. Kembalikan availability_status item → 'available'
+    // 3. Simpan kondisi fisik dan status operasional barang sesuai hasil inspeksi.
     await client.query(
-      `UPDATE items SET availability_status = 'available' WHERE item_id = $1`,
-      [tx.item_id]
+      `UPDATE items
+          SET item_condition = $1,
+              availability_status = $2
+        WHERE item_id = $3`,
+      [returnCondition, itemStatus, tx.item_id]
     );
 
     // 4. Perbarui user_gamifications (hanya jika delta ≠ 0)
@@ -362,6 +368,7 @@ export async function confirmReturn({
           item_name:        tx.item_name,
           borrower_id:      tx.borrower_id,
           return_condition: returnCondition,
+          item_status:     itemStatus,
           late_days:        lateDays,
           returned_at:      returnTime.toISOString(),
           point_delta:      actualDelta,
@@ -381,6 +388,7 @@ export async function confirmReturn({
       item_name:        tx.item_name,
       borrower_id:      tx.borrower_id,
       return_condition: returnCondition,
+      availability_status: itemStatus,
       late_days:        lateDays,
       returned_at:      inspection.returned_at,
       confirmed_at:     inspection.confirmed_at,
