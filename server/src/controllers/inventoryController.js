@@ -148,13 +148,14 @@ export async function getItemById(req, res, next) {
 
 export async function createItem(req, res, next) {
   try {
-    const { item_name, category_id, item_condition, availability_status } = req.body;
+    const { item_name, category_id, item_condition, availability_status, image_url } = req.body;
 
     const newItem = await inventoryService.createItem({
       item_name,
       category_id,
       item_condition,
       availability_status,
+      image_url,
       actorUserId: req.user?.user_id,
       actorName: req.user?.full_name,
     });
@@ -172,7 +173,7 @@ export async function createItem(req, res, next) {
 export async function updateItem(req, res, next) {
   try {
     const id = Number(req.params.id);
-    const { item_name, category_id, item_condition, availability_status } = req.body;
+    const { item_name, category_id, item_condition, availability_status, image_url } = req.body;
 
     const updatedItem = await inventoryService.updateItem({
       item_id: id,
@@ -180,6 +181,7 @@ export async function updateItem(req, res, next) {
       category_id,
       item_condition,
       availability_status,
+      image_url,
       actorUserId: req.user?.user_id,
       actorName: req.user?.full_name,
     });

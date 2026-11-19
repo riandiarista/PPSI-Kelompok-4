@@ -275,6 +275,7 @@ export async function getItems({
       i.item_condition,
       i.availability_status,
       i.is_active,
+      i.image_url,
       i.created_at,
       i.updated_at
     FROM items i
@@ -325,6 +326,7 @@ export async function getItemById(itemId) {
       i.item_condition,
       i.availability_status,
       i.is_active,
+      i.image_url,
       i.created_at,
       i.updated_at
     FROM items i
@@ -340,11 +342,13 @@ export async function createItem({
   category_id,
   item_condition = "good",
   availability_status = "available",
+  image_url = null,
   actorUserId,
   actorName,
 }) {
   const name = String(item_name || "").trim();
   const catId = Number(category_id);
+  const imgUrl = image_url ? String(image_url).trim() : null;
 
   if (!name || name.length < 2) {
     const err = new Error("Nama barang wajib diisi minimal 2 karakter");
@@ -388,10 +392,10 @@ export async function createItem({
 
   const { rows } = await db.query(
     `INSERT INTO items (
-       category_id, item_name, item_condition, availability_status, is_active
-     ) VALUES ($1, $2, $3, $4, TRUE)
-     RETURNING item_id, category_id, item_name, item_condition, availability_status, is_active, created_at, updated_at`,
-    [catId, name, item_condition, availability_status]
+       category_id, item_name, item_condition, availability_status, image_url, is_active
+     ) VALUES ($1, $2, $3, $4, $5, TRUE)
+     RETURNING item_id, category_id, item_name, item_condition, availability_status, image_url, is_active, created_at, updated_at`,
+    [catId, name, item_condition, availability_status, imgUrl]
   );
 
   const newItem = rows[0];
@@ -409,6 +413,7 @@ export async function createItem({
         category_name: categoryName,
         item_condition: newItem.item_condition,
         availability_status: newItem.availability_status,
+        image_url: newItem.image_url,
         actor_name: actorName || "Tendik",
       }),
     ]
@@ -423,6 +428,7 @@ export async function updateItem({
   category_id,
   item_condition,
   availability_status,
+  image_url,
   actorUserId,
   actorName,
 }) {
@@ -450,7 +456,7 @@ export async function updateItem({
 
   // Cek keberadaan barang
   const { rows: currentRows } = await db.query(
-    "SELECT item_id, item_name, category_id, item_condition, availability_status, is_active FROM items WHERE item_id = $1",
+    "SELECT item_id, item_name, category_id, item_condition, availability_status, image_url, is_active FROM items WHERE item_id = $1",
     [id]
   );
   if (currentRows.length === 0) {
@@ -510,6 +516,7 @@ export async function updateItem({
 
   const targetCondition = item_condition || oldItem.item_condition;
   const targetStatus = availability_status || oldItem.availability_status;
+  const targetImageUrl = image_url !== undefined ? (image_url ? String(image_url).trim() : null) : oldItem.image_url;
 
   const { rows } = await db.query(
     `UPDATE items
@@ -517,10 +524,11 @@ export async function updateItem({
             category_id = $2,
             item_condition = $3,
             availability_status = $4,
+            image_url = $5,
             updated_at = NOW()
-      WHERE item_id = $5
-      RETURNING item_id, category_id, item_name, item_condition, availability_status, is_active, created_at, updated_at`,
-    [name, catId, targetCondition, targetStatus, id]
+      WHERE item_id = $6
+      RETURNING item_id, category_id, item_name, item_condition, availability_status, image_url, is_active, created_at, updated_at`,
+    [name, catId, targetCondition, targetStatus, targetImageUrl, id]
   );
 
   const updatedItem = rows[0];
@@ -540,12 +548,14 @@ export async function updateItem({
           category_id: oldItem.category_id,
           item_condition: oldItem.item_condition,
           availability_status: oldItem.availability_status,
+          image_url: oldItem.image_url,
         },
         new_data: {
           item_name: updatedItem.item_name,
           category_id: updatedItem.category_id,
           item_condition: updatedItem.item_condition,
           availability_status: updatedItem.availability_status,
+          image_url: updatedItem.image_url,
         },
         actor_name: actorName || "Tendik",
       }),

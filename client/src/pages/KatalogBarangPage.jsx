@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
+import { useAuth } from '../auth/authContext'
 import Icon from '../components/Icon'
 import { api } from '../lib/api'
 
@@ -20,72 +21,34 @@ function addDays(dateStr, days) {
 
 // "2026-11-20" -> "20 Nov 2026"
 function formatTanggal(dateStr) {
-  return new Intl.DateTimeFormat('id-ID', { day: 'numeric', month: 'short', year: 'numeric', timeZone: 'UTC' }).format(
-    new Date(`${dateStr}T12:00:00Z`)
-  )
+  if (!dateStr) return '-'
+  try {
+    return new Intl.DateTimeFormat('id-ID', {
+      day: 'numeric',
+      month: 'short',
+      year: 'numeric',
+      timeZone: 'UTC',
+    }).format(new Date(`${dateStr}T12:00:00Z`))
+  } catch {
+    return dateStr
+  }
 }
 
-// Rentang dari server [mulai, selesai) -> "20 – 21 Nov 2026" (tanggal terakhir dipakai = selesai - 1 hari)
+// Rentang dari server [mulai, selesai) -> "20 – 21 Nov 2026"
 function formatRentang(start, end) {
-  const fmt = (d) => new Intl.DateTimeFormat('id-ID', { day: 'numeric', month: 'short', year: 'numeric', timeZone: 'Asia/Jakarta' }).format(d)
+  const fmt = (d) =>
+    new Intl.DateTimeFormat('id-ID', {
+      day: 'numeric',
+      month: 'short',
+      year: 'numeric',
+      timeZone: 'Asia/Jakarta',
+    }).format(d)
   const s = new Date(start)
   const last = new Date(new Date(end).getTime() - 1)
   return fmt(s) === fmt(last) ? fmt(s) : `${fmt(s)} – ${fmt(last)}`
 }
 
-// Data bawaan sesuai tampilan desain/mockup
-const DEFAULT_ITEMS = [
-  {
-    item_id: 1,
-    item_name: 'Kamera DSLR',
-    category_name: 'Kamera',
-    item_condition: 'good',
-    item_condition_label: 'Kondisi baik',
-    availability_status: 'available',
-  },
-  {
-    item_id: 2,
-    item_name: 'Proyektor (Infokus) 01',
-    category_name: 'Proyektor',
-    item_condition: 'good',
-    item_condition_label: 'Kondisi baik',
-    availability_status: 'available',
-  },
-  {
-    item_id: 3,
-    item_name: 'Proyektor (Infokus) 02',
-    category_name: 'Proyektor',
-    item_condition: 'good',
-    item_condition_label: 'Kondisi baik',
-    availability_status: 'borrowed',
-  },
-  {
-    item_id: 4,
-    item_name: 'Speaker portabel',
-    category_name: 'Elektronik',
-    item_condition: 'good',
-    item_condition_label: 'Kondisi baik',
-    availability_status: 'available',
-  },
-  {
-    item_id: 5,
-    item_name: 'Buku sumbangan dosen',
-    category_name: 'Buku',
-    item_condition: 'good',
-    item_condition_label: 'Kondisi baik',
-    availability_status: 'available',
-  },
-  {
-    item_id: 6,
-    item_name: 'Tripod',
-    category_name: 'Kamera',
-    item_condition: 'good',
-    item_condition_label: 'Kondisi baik',
-    availability_status: 'return_process',
-  },
-]
-
-// Pemetaan badge status operasional
+// Pemetaan badge status operasional inventaris
 const STATUS_CONFIG = {
   available: {
     label: 'Tersedia',
@@ -95,11 +58,6 @@ const STATUS_CONFIG = {
   borrowed: {
     label: 'Sedang dipinjam',
     badgeClass: 'bg-[#FFF6E5] text-[#B76E00] border-[#FFE8B8]',
-    isAvailable: false,
-  },
-  return_process: {
-    label: 'Proses pengembalian',
-    badgeClass: 'bg-[#EBF2FC] text-[#2C6ECB] border-[#D0E2FB]',
     isAvailable: false,
   },
   maintenance: {
@@ -115,69 +73,100 @@ const STATUS_CONFIG = {
 }
 
 export default function KatalogBarangPage() {
-  const [items, setItems] = useState(DEFAULT_ITEMS)
-  const [search, setSearch] = useState('')
-  const [activeFilter, setActiveFilter] = useState('all') // 'all' | 'available' | 'borrowed' | 'return_process'
-  const [selectedItemId, setSelectedItemId] = useState(1) // Default Kamera DSLR terpilih
+  const { user } = useAuth()
 
-  // Form State
+  // State Data Aktual Database
+  const [items, setItems] = useState([])
+  const [loading, setLoading] = useState(true)
+  const [fetchError, setFetchError] = useState('')
+  const [refreshKey, setRefreshKey] = useState(0)
+
+  // State Filter & Pencarian
+  const [search, setSearch] = useState('')
+  const [activeFilter, setActiveFilter] = useState('all') // 'all' | 'available' | 'borrowed' | 'maintenance'
+  const [selectedItemId, setSelectedItemId] = useState(null)
+
+  // State Form Pengajuan Peminjaman
   const [purpose, setPurpose] = useState('')
   const [borrowDate, setBorrowDate] = useState(todayWib)
   const [duration, setDuration] = useState(1)
   const [submitting, setSubmitting] = useState(false)
   const [formError, setFormError] = useState('')
   const [successModal, setSuccessModal] = useState({ open: false, data: null })
-  // Hasil cek ketersediaan & bentrok jadwal (#24), disimpan bersama kunci query-nya
+
+  // State Cek Ketersediaan & Bentrok Jadwal
   const [availability, setAvailability] = useState({ key: null, data: null, error: '' })
   const [availabilityVersion, setAvailabilityVersion] = useState(0)
 
-  // Coba ambil data dari API server jika tersedia, fallback ke DEFAULT_ITEMS
+  // 1. Ambil data inventaris aktual langsung dari API backend / database PostgreSQL
   useEffect(() => {
     let cancelled = false
+    setLoading(true)
+    setFetchError('')
+
     api('/inventory/items')
       .then((res) => {
         if (cancelled) return
-        if (res?.data && res.data.length > 0) {
-          const mapped = res.data.map((item) => ({
-            ...item,
-            item_condition_label:
-              item.item_condition === 'good'
-                ? 'Kondisi baik'
-                : item.item_condition === 'minor_damage'
-                ? 'Rusak ringan'
-                : 'Rusak berat',
-          }))
-          setItems(mapped)
-          // Set item pertama yang tersedia sebagai pilihan awal
-          const firstAvailable = mapped.find((it) => it.availability_status === 'available')
-          if (firstAvailable) {
-            setSelectedItemId(firstAvailable.item_id)
+        const fetched = res.data || []
+        const mapped = fetched.map((item) => ({
+          ...item,
+          item_condition_label:
+            item.item_condition === 'good'
+              ? 'Kondisi baik'
+              : item.item_condition === 'minor_damage'
+              ? 'Rusak ringan'
+              : 'Rusak berat',
+        }))
+        setItems(mapped)
+
+        // Otomatis pilih barang yang tersedia pertama jika belum ada yang terpilih
+        setSelectedItemId((prevId) => {
+          if (prevId && mapped.some((it) => it.item_id === prevId)) {
+            return prevId
           }
-        }
+          const firstAvailable = mapped.find((it) => it.availability_status === 'available')
+          return firstAvailable ? firstAvailable.item_id : (mapped[0]?.item_id || null)
+        })
       })
-      .catch(() => {
-        // Jika server backend belum berjalan / belum ada data, gunakan DEFAULT_ITEMS
+      .catch((err) => {
+        if (!cancelled) setFetchError(err.message || 'Gagal memuat katalog barang dari server')
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false)
       })
 
     return () => {
       cancelled = true
     }
-  }, [])
+  }, [refreshKey])
 
   // Item yang sedang aktif terpilih
   const selectedItem = useMemo(() => {
+    if (!selectedItemId) return items[0] || null
     return items.find((item) => item.item_id === selectedItemId) || items[0] || null
   }, [items, selectedItemId])
 
-  // Cek ketersediaan ke server setiap kali barang/tanggal/durasi berubah
+  // Hitung jumlah item per kategori status operasional berdasarkan data aktual DB
+  const counts = useMemo(() => {
+    return {
+      all: items.length,
+      available: items.filter((it) => it.availability_status === 'available').length,
+      borrowed: items.filter((it) => it.availability_status === 'borrowed').length,
+      maintenance: items.filter((it) => it.availability_status === 'maintenance').length,
+    }
+  }, [items])
+
+  // 2. Real-time Cek Ketersediaan & Bentrok Jadwal (#24)
   const canCheck = Boolean(selectedItem && selectedItem.availability_status === 'available' && borrowDate)
-  const availabilityKey = canCheck ? `${selectedItem.item_id}|${borrowDate}|${duration}|${availabilityVersion}` : null
+  const availabilityKey = canCheck
+    ? `${selectedItem.item_id}|${borrowDate}|${duration}|${availabilityVersion}`
+    : null
 
   useEffect(() => {
     if (!availabilityKey) return
     const [itemId, date, days] = availabilityKey.split('|')
     let cancelled = false
-    // Jeda singkat supaya tidak memanggil server di setiap ketukan saat memilih tanggal
+
     const timer = setTimeout(() => {
       api(`/loans/availability?${new URLSearchParams({ item_id: itemId, borrow_date: date, duration_days: days })}`)
         .then((res) => {
@@ -187,6 +176,7 @@ export default function KatalogBarangPage() {
           if (!cancelled) setAvailability({ key: availabilityKey, data: null, error: err.message })
         })
     }, 250)
+
     return () => {
       cancelled = true
       clearTimeout(timer)
@@ -198,17 +188,7 @@ export default function KatalogBarangPage() {
   const checkError = availabilityReady ? availability.error : ''
   const scheduleBlocked = checkResult?.available === false
 
-  // Hitung jumlah item per kategori status
-  const counts = useMemo(() => {
-    return {
-      all: items.length,
-      available: items.filter((it) => it.availability_status === 'available').length,
-      borrowed: items.filter((it) => it.availability_status === 'borrowed').length,
-      return_process: items.filter((it) => it.availability_status === 'return_process').length,
-    }
-  }, [items])
-
-  // Filter daftar item berdasarkan pencarian dan status pill
+  // Filter daftar item berdasarkan kata kunci pencarian dan status pill
   const filteredItems = useMemo(() => {
     return items.filter((item) => {
       const matchSearch =
@@ -225,10 +205,15 @@ export default function KatalogBarangPage() {
     })
   }, [items, search, activeFilter])
 
-  // Handle pengiriman formulir peminjaman
+  // 3. Handle pengiriman formulir pengajuan peminjaman ke backend
   const handleSubmitLoan = async (e) => {
     e.preventDefault()
     setFormError('')
+
+    if (!user) {
+      setFormError('Anda harus login terlebih dahulu untuk mengajukan peminjaman.')
+      return
+    }
 
     if (!selectedItem) {
       setFormError('Silakan pilih barang yang ingin dipinjam terlebih dahulu.')
@@ -245,15 +230,25 @@ export default function KatalogBarangPage() {
       return
     }
 
+    if (purpose.trim().length > 500) {
+      setFormError('Keperluan peminjaman maksimal 500 karakter.')
+      return
+    }
+
     if (!borrowDate) {
       setFormError('Tanggal pinjam wajib diisi.')
+      return
+    }
+
+    if (duration < 1 || duration > MAX_DURATION_DAYS) {
+      setFormError(`Durasi peminjaman harus antara 1 sampai ${MAX_DURATION_DAYS} hari.`)
       return
     }
 
     setSubmitting(true)
 
     try {
-      // Server memvalidasi ulang ketersediaan & bentrok jadwal saat menyimpan
+      // Kirim pengajuan ke endpoint resmi backend POST /api/loans/request
       const res = await api('/loans/request', {
         method: 'POST',
         body: {
@@ -276,9 +271,11 @@ export default function KatalogBarangPage() {
           pendingOverlaps: res.data?.pending_overlaps || 0,
         },
       })
+
+      // Reset form & perbarui ketersediaan serta daftar inventaris aktual
       setPurpose('')
-      // Jadwal berubah setelah pengajuan, cek ulang ketersediaannya
       setAvailabilityVersion((v) => v + 1)
+      setRefreshKey((k) => k + 1)
     } catch (err) {
       setFormError(err.message || 'Gagal mengajukan peminjaman.')
       setAvailabilityVersion((v) => v + 1)
@@ -328,7 +325,7 @@ export default function KatalogBarangPage() {
         </div>
       </div>
 
-      {/* Filter Status Pills */}
+      {/* Filter Status Pills Berdasarkan Data Aktual Database */}
       <div className="flex flex-wrap items-center gap-2">
         <button
           type="button"
@@ -366,24 +363,38 @@ export default function KatalogBarangPage() {
           Sedang dipinjam · {counts.borrowed}
         </button>
 
-        <button
-          type="button"
-          onClick={() => setActiveFilter('return_process')}
-          className={`rounded-full px-4 py-1.5 text-[13px] font-medium transition ${
-            activeFilter === 'return_process'
-              ? 'bg-[#1E3F70] text-white shadow-sm'
-              : 'border border-neutral-300 bg-white text-[#14231F] hover:bg-neutral-50'
-          }`}
-        >
-          Proses pengembalian · {counts.return_process}
-        </button>
+        {counts.maintenance > 0 && (
+          <button
+            type="button"
+            onClick={() => setActiveFilter('maintenance')}
+            className={`rounded-full px-4 py-1.5 text-[13px] font-medium transition ${
+              activeFilter === 'maintenance'
+                ? 'bg-[#1E3F70] text-white shadow-sm'
+                : 'border border-neutral-300 bg-white text-[#14231F] hover:bg-neutral-50'
+            }`}
+          >
+            Perbaikan · {counts.maintenance}
+          </button>
+        )}
       </div>
+
+      {/* Notifikasi Error Fetch */}
+      {fetchError && (
+        <div className="rounded-[10px] border border-red-200 bg-red-50 p-4 text-[13px] text-red-700">
+          {fetchError}
+        </div>
+      )}
 
       {/* Konten Utama: 2 Kolom (Katalog Grid di Kiri + Form Pengajuan di Kanan) */}
       <div className="flex flex-col items-start gap-6 lg:flex-row">
         {/* Kolom Kiri: Grid Kartu Barang */}
         <div className="min-w-0 flex-1 w-full">
-          {filteredItems.length === 0 ? (
+          {loading ? (
+            <div className="flex items-center justify-center gap-2 rounded-[14px] border border-neutral-200 bg-white py-20 text-[13.5px] text-[#4A5B56] shadow-sm">
+              <Icon name="refresh" size={18} className="animate-spin text-[#1E3F70]" />
+              Memuat data barang dari database...
+            </div>
+          ) : filteredItems.length === 0 ? (
             <div className="rounded-[14px] border border-dashed border-neutral-300 bg-white px-6 py-16 text-center">
               <Icon name="search" size={32} className="mx-auto text-neutral-400" />
               <p className="mt-3 text-[15px] font-bold text-[#14231F]">Barang tidak ditemukan</p>
@@ -436,12 +447,17 @@ export default function KatalogBarangPage() {
                         {item.category_name} · {item.item_condition_label || 'Kondisi baik'}
                       </p>
 
-                      {/* Badge Status */}
-                      <div className="mt-2.5 mb-3.5">
+                      {/* Baris Status Ketersediaan & Stok */}
+                      <div className="mt-2.5 mb-3.5 flex items-center justify-between">
                         <span
                           className={`inline-block rounded-full border px-2.5 py-0.5 text-[11px] font-medium ${statusInfo.badgeClass}`}
                         >
                           {statusInfo.label}
+                        </span>
+                        <span className="text-[11.5px] text-[#4A5B56]">
+                          Stok: <strong className={isAvailable ? 'text-[#1E7E34]' : 'text-neutral-500'}>
+                            {isAvailable ? '1 unit' : '0 unit'}
+                          </strong>
                         </span>
                       </div>
                     </div>
@@ -494,9 +510,14 @@ export default function KatalogBarangPage() {
               <h2 className="mt-0.5 text-[20px] font-bold leading-tight text-[#14231F]">
                 {selectedItem ? selectedItem.item_name : 'Pilih barang'}
               </h2>
-              <p className="mt-0.5 text-[12.5px] text-[#4A5B56]">
-                {selectedItem ? selectedItem.category_name : '-'}
-              </p>
+              <div className="mt-0.5 flex items-center justify-between text-[12.5px] text-[#4A5B56]">
+                <span>{selectedItem ? selectedItem.category_name : '-'}</span>
+                {selectedItem && (
+                  <span className={selectedItem.availability_status === 'available' ? 'text-[#1E7E34] font-medium' : 'text-neutral-500'}>
+                    {selectedItem.availability_status === 'available' ? 'Stok: 1 unit tersedia' : 'Stok: Tidak tersedia'}
+                  </span>
+                )}
+              </div>
             </div>
 
             {/* Error Notifikasi Form */}
@@ -510,20 +531,27 @@ export default function KatalogBarangPage() {
             <form onSubmit={handleSubmitLoan} className="flex flex-col gap-4">
               {/* Field Keperluan */}
               <div>
-                <label htmlFor="loan-purpose" className="mb-1.5 block text-[13px] font-medium text-[#14231F]">
-                  Keperluan
-                </label>
+                <div className="mb-1.5 flex items-center justify-between text-[13px]">
+                  <label htmlFor="loan-purpose" className="font-medium text-[#14231F]">
+                    Keperluan
+                  </label>
+                  <span className="text-[11px] text-[#4A5B56]">{purpose.length}/500</span>
+                </div>
                 <textarea
                   id="loan-purpose"
                   rows={3}
+                  maxLength={500}
                   value={purpose}
-                  onChange={(e) => setPurpose(e.target.value)}
+                  onChange={(e) => {
+                    setPurpose(e.target.value)
+                    setFormError('')
+                  }}
                   placeholder="Jelaskan untuk kegiatan apa barang dipakai"
                   className="w-full resize-none rounded-[10px] border border-neutral-300 p-3 text-[13px] text-[#14231F] placeholder:text-neutral-400 focus:border-[#1E3F70] focus:outline-none focus:ring-2 focus:ring-[#1E3F70]/15"
                 />
               </div>
 
-              {/* Row: Tanggal Pinjam & Durasi */}
+              {/* Row: Tanggal Pinjam & Durasi / Jumlah */}
               <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label htmlFor="loan-date" className="mb-1.5 block text-[13px] font-medium text-[#14231F]">
@@ -565,7 +593,13 @@ export default function KatalogBarangPage() {
                 </div>
               </div>
 
-              {/* Hasil cek ketersediaan & bentrok jadwal */}
+              {/* Field Jumlah Unit (Aset individual bernilai 1 unit per item) */}
+              <div className="flex items-center justify-between rounded-[8px] border border-neutral-200 bg-[#F6F7F5] px-3 py-2 text-[12.5px]">
+                <span className="text-[#4A5B56]">Jumlah unit barang:</span>
+                <span className="font-semibold text-[#14231F]">1 unit</span>
+              </div>
+
+              {/* Hasil Cek Ketersediaan Stok & Bentrok Jadwal (#24) */}
               <AvailabilityStatus
                 enabled={canCheck}
                 loading={canCheck && !availabilityReady}
@@ -581,7 +615,12 @@ export default function KatalogBarangPage() {
               {/* Tombol Kirim Pengajuan */}
               <button
                 type="submit"
-                disabled={submitting || !selectedItem || selectedItem.availability_status !== 'available' || scheduleBlocked}
+                disabled={
+                  submitting ||
+                  !selectedItem ||
+                  selectedItem.availability_status !== 'available' ||
+                  scheduleBlocked
+                }
                 className="mt-1 flex w-full items-center justify-center rounded-[10px] bg-[#14532D] py-2.5 text-center text-[14px] font-semibold text-white shadow-sm transition hover:bg-[#0f3f22] active:scale-[0.99] disabled:cursor-not-allowed disabled:bg-neutral-300 disabled:text-neutral-500"
               >
                 {submitting ? 'Mengirim...' : 'Kirim pengajuan'}
@@ -633,14 +672,14 @@ export default function KatalogBarangPage() {
                 to="/peminjam/status"
                 className="w-full rounded-[10px] bg-[#1E3F70] py-2.5 text-center text-[13.5px] font-medium text-white hover:bg-[#163056]"
               >
-                Lihat Status & Notifikasi
+                Lihat Status &amp; Notifikasi
               </Link>
               <button
                 type="button"
                 onClick={() => setSuccessModal({ open: false, data: null })}
                 className="w-full rounded-[10px] border border-neutral-300 py-2.5 text-center text-[13.5px] font-medium text-[#14231F] hover:bg-neutral-50"
               >
-                Tutup & Ajukan Lainnya
+                Tutup &amp; Ajukan Lainnya
               </button>
             </div>
           </div>
@@ -700,4 +739,3 @@ function AvailabilityStatus({ enabled, loading, result, error }) {
     </div>
   )
 }
-
