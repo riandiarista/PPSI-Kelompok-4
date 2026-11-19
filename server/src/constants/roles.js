@@ -19,6 +19,7 @@ export const ACCESS = Object.freeze({
 
   // Peminjaman
   ajukanPeminjaman: [PEMINJAM],
+  lihatPengajuanSendiri: [PEMINJAM],
   lihatSemuaPengajuan: [TENDIK, KADEP],
   approvalPeminjaman: [KADEP],
   serahTerimaBarang: [TENDIK],

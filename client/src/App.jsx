@@ -14,6 +14,7 @@ import PengembalianPage from './pages/PengembalianPage'
 import PoinRewardPage from './pages/PoinRewardPage'
 import PlaceholderPage from './pages/PlaceholderPage'
 import HistoryReportPage from './pages/HistoryReportPage'
+import StatusNotifikasiPage from './pages/StatusNotifikasiPage'
 
 export default function App() {
   return (
@@ -51,6 +52,8 @@ function AppRoutes() {
                     <KelolaInventarisPage />
                   ) : item.path === '/peminjam/katalog' ? (
                     <KatalogBarangPage />
+                  ) : item.path === '/peminjam/status' ? (
+                    <StatusNotifikasiPage />
                   ) : item.path === '/peminjam/poin' ? (
                     <PoinRewardPage />
                   ) : item.path === '/kadep/antrean' ? (

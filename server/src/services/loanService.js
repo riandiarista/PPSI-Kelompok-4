@@ -776,3 +776,297 @@ export async function decideLoanRequest({ requestId, approverId, decision, reaso
   }
   throw httpError(400, "Keputusan tidak valid (harus 'approved' atau 'rejected')");
 }
+
+/**
+ * Mengambil daftar pengajuan dan peminjaman milik peminjam yang sedang login.
+ */
+export async function getMyLoanRequests(borrowerId, { tab = "all", search = "" } = {}) {
+  const query = `
+    SELECT 
+      lr.request_id,
+      lr.borrower_id,
+      lr.item_id,
+      lr.purpose,
+      lr.planned_start_at,
+      lr.planned_end_at,
+      lr.submitted_at,
+      lr.review_queue_date,
+      lr.request_status,
+      i.item_name,
+      i.item_condition,
+      i.availability_status as item_availability,
+      c.category_name,
+      ad.decision,
+      ad.reason AS rejection_reason,
+      ad.decided_at,
+      approver.full_name AS approver_name,
+      lt.loan_id,
+      lt.transaction_status,
+      lt.handover_at,
+      lt.due_at,
+      handover_user.full_name AS handover_by_name,
+      ri.inspection_id,
+      ri.returned_at,
+      ri.return_condition,
+      ri.notes AS return_notes,
+      ri.late_days,
+      return_user.full_name AS return_confirmed_by_name
+    FROM loan_requests lr
+    JOIN items i ON lr.item_id = i.item_id
+    JOIN item_categories c ON i.category_id = c.category_id
+    LEFT JOIN approval_decisions ad ON lr.request_id = ad.request_id
+    LEFT JOIN users approver ON ad.approver_id = approver.user_id
+    LEFT JOIN loan_transactions lt ON lr.request_id = lt.request_id
+    LEFT JOIN users handover_user ON lt.handover_by = handover_user.user_id
+    LEFT JOIN return_inspections ri ON lt.loan_id = ri.loan_id
+    LEFT JOIN users return_user ON ri.confirmed_by = return_user.user_id
+    WHERE lr.borrower_id = $1
+    ORDER BY lr.submitted_at DESC, lr.request_id DESC
+  `;
+
+  const { rows } = await db.query(query, [borrowerId]);
+
+  // Hitung status terpadu dan kategori filter
+  const processed = rows.map((r) => {
+    let currentStatus = r.request_status;
+    let statusLabel = "Menunggu Persetujuan";
+    let statusCategory = "pending";
+
+    if (r.transaction_status === "returned") {
+      currentStatus = "returned";
+      statusLabel = "Selesai Dikembalikan";
+      statusCategory = "returned";
+    } else if (r.transaction_status === "borrowed" || r.transaction_status === "overdue") {
+      currentStatus = r.transaction_status;
+      statusLabel = r.transaction_status === "overdue" ? "Terlambat Dikembalikan" : "Sedang Dipinjam";
+      statusCategory = "borrowed";
+    } else if (r.request_status === "rejected") {
+      currentStatus = "rejected";
+      statusLabel = "Ditolak Kadep";
+      statusCategory = "rejected";
+    } else if (r.request_status === "approved") {
+      currentStatus = "approved";
+      statusLabel = "Disetujui (Menunggu Serah Terima)";
+      statusCategory = "approved";
+    } else if (r.request_status === "cancelled") {
+      currentStatus = "cancelled";
+      statusLabel = "Dibatalkan";
+      statusCategory = "cancelled";
+    } else {
+      currentStatus = "pending";
+      statusLabel = "Menunggu Persetujuan";
+      statusCategory = "pending";
+    }
+
+    return {
+      ...r,
+      current_status: currentStatus,
+      status_label: statusLabel,
+      status_category: statusCategory,
+    };
+  });
+
+  // Hitung counts per kategori
+  const counts = {
+    all: processed.length,
+    pending: processed.filter((item) => item.status_category === "pending").length,
+    approved: processed.filter((item) => item.status_category === "approved").length,
+    borrowed: processed.filter((item) => item.status_category === "borrowed").length,
+    returned: processed.filter((item) => item.status_category === "returned").length,
+    rejected: processed.filter((item) => item.status_category === "rejected").length,
+  };
+
+  // Filter tab jika bukan 'all'
+  let filtered = processed;
+  if (tab && tab !== "all") {
+    filtered = filtered.filter((item) => item.status_category === tab);
+  }
+
+  // Filter search
+  if (search && search.trim()) {
+    const q = search.trim().toLowerCase();
+    filtered = filtered.filter(
+      (item) =>
+        (item.item_name && item.item_name.toLowerCase().includes(q)) ||
+        (item.purpose && item.purpose.toLowerCase().includes(q)) ||
+        (item.category_name && item.category_name.toLowerCase().includes(q))
+    );
+  }
+
+  return {
+    items: filtered,
+    counts,
+  };
+}
+
+/**
+ * Membatalkan pengajuan yang masih berstatus 'pending'.
+ */
+export async function cancelLoanRequest({ requestId, borrowerId }) {
+  const reqId = Number(requestId);
+  if (!Number.isInteger(reqId) || reqId <= 0) {
+    throw httpError(400, "ID pengajuan tidak valid");
+  }
+
+  const { rows } = await db.query(
+    `SELECT request_id, request_status, item_id FROM loan_requests WHERE request_id = $1 AND borrower_id = $2`,
+    [reqId, borrowerId]
+  );
+
+  if (rows.length === 0) {
+    throw httpError(404, "Pengajuan peminjaman tidak ditemukan");
+  }
+
+  const loan = rows[0];
+  if (loan.request_status !== "pending") {
+    throw httpError(400, "Hanya pengajuan berstatus menunggu persetujuan yang dapat dibatalkan");
+  }
+
+  await db.query(
+    `UPDATE loan_requests SET request_status = 'cancelled' WHERE request_id = $1`,
+    [reqId]
+  );
+
+  return { request_id: reqId, request_status: "cancelled" };
+}
+
+/**
+ * Mengambil daftar notifikasi untuk peminjam.
+ */
+export async function getMyNotifications(borrowerId) {
+  const notifications = [];
+
+  // 1. Notifikasi dari log pengingat (notification_logs)
+  const logQuery = `
+    SELECT 
+      nl.notification_id,
+      nl.notification_type,
+      nl.status,
+      nl.sent_at,
+      nl.created_at,
+      lt.loan_id,
+      lt.due_at,
+      i.item_name
+    FROM notification_logs nl
+    JOIN loan_transactions lt ON nl.loan_id = lt.loan_id
+    JOIN loan_requests lr ON lt.request_id = lr.request_id
+    JOIN items i ON lr.item_id = i.item_id
+    WHERE nl.user_id = $1 AND nl.status = 'sent'
+    ORDER BY nl.created_at DESC
+  `;
+  const { rows: logs } = await db.query(logQuery, [borrowerId]);
+  for (const log of logs) {
+    if (
+      log.notification_type === "due_h_minus_1" ||
+      log.notification_type === "due_reminder_h1" ||
+      log.notification_type === "due_h_minus_2" ||
+      log.notification_type === "due_reminder_h2"
+    ) {
+      const isH2 = log.notification_type.includes("2");
+      notifications.push({
+        id: `reminder-${log.notification_id}`,
+        type: "reminder",
+        title: isH2 ? "Pengingat Jatuh Tempo (H-2)" : "Pengingat Jatuh Tempo (H-1)",
+        message: `Email pengingat jatuh tempo untuk peminjaman barang "${log.item_name}" telah dikirim ke email Anda. Harap kembalikan tepat waktu untuk menghindari pengurangan poin.`,
+        date: log.sent_at || log.created_at,
+        severity: "warning",
+      });
+    }
+  }
+
+  // 2. Notifikasi keputusan persetujuan/penolakan
+  const decisionQuery = `
+    SELECT 
+      ad.decision_id,
+      ad.decision,
+      ad.reason,
+      ad.decided_at,
+      i.item_name,
+      lr.request_id
+    FROM approval_decisions ad
+    JOIN loan_requests lr ON ad.request_id = lr.request_id
+    JOIN items i ON lr.item_id = i.item_id
+    WHERE lr.borrower_id = $1
+    ORDER BY ad.decided_at DESC
+  `;
+  const { rows: decisions } = await db.query(decisionQuery, [borrowerId]);
+  for (const dec of decisions) {
+    if (dec.decision === "approved") {
+      notifications.push({
+        id: `decision-${dec.decision_id}`,
+        type: "approval_approved",
+        title: "Pengajuan Peminjaman Disetujui",
+        message: `Pengajuan peminjaman barang "${dec.item_name}" telah disetujui oleh Ketua Departemen. Silakan temui Tendik di laboratorium untuk serah terima barang.`,
+        date: dec.decided_at,
+        severity: "success",
+      });
+    } else if (dec.decision === "rejected") {
+      notifications.push({
+        id: `decision-${dec.decision_id}`,
+        type: "approval_rejected",
+        title: "Pengajuan Peminjaman Ditolak",
+        message: `Pengajuan peminjaman barang "${dec.item_name}" ditolak oleh Ketua Departemen. Alasan: ${dec.reason}`,
+        date: dec.decided_at,
+        severity: "error",
+      });
+    }
+  }
+
+  // 3. Notifikasi serah terima barang
+  const handoverQuery = `
+    SELECT 
+      lt.loan_id,
+      lt.handover_at,
+      lt.due_at,
+      i.item_name
+    FROM loan_transactions lt
+    JOIN loan_requests lr ON lt.request_id = lr.request_id
+    JOIN items i ON lr.item_id = i.item_id
+    WHERE lr.borrower_id = $1
+    ORDER BY lt.handover_at DESC
+  `;
+  const { rows: handovers } = await db.query(handoverQuery, [borrowerId]);
+  for (const h of handovers) {
+    notifications.push({
+      id: `handover-${h.loan_id}`,
+      type: "handover",
+      title: "Barang Berhasil Diserahterimakan",
+      message: `Barang "${h.item_name}" telah diserahkan oleh Tendik dan masa pinjam telah dimulai.`,
+      date: h.handover_at,
+      severity: "info",
+    });
+  }
+
+  // 4. Notifikasi pengembalian
+  const returnQuery = `
+    SELECT 
+      ri.inspection_id,
+      ri.returned_at,
+      ri.return_condition,
+      ri.late_days,
+      i.item_name
+    FROM return_inspections ri
+    JOIN loan_transactions lt ON ri.loan_id = lt.loan_id
+    JOIN loan_requests lr ON lt.request_id = lr.request_id
+    JOIN items i ON lr.item_id = i.item_id
+    WHERE lr.borrower_id = $1
+    ORDER BY ri.returned_at DESC
+  `;
+  const { rows: returns } = await db.query(returnQuery, [borrowerId]);
+  for (const ret of returns) {
+    const isLate = ret.late_days > 0;
+    notifications.push({
+      id: `return-${ret.inspection_id}`,
+      type: "return",
+      title: isLate ? "Pengembalian Barang Selesai (Terlambat)" : "Pengembalian Barang Selesai",
+      message: `Barang "${ret.item_name}" telah diterima kembali oleh Tendik (kondisi: ${ret.return_condition}${isLate ? `, terlambat ${ret.late_days} hari` : ""}).`,
+      date: ret.returned_at,
+      severity: isLate ? "warning" : "success",
+    });
+  }
+
+  // Urutkan semua notifikasi dari yang terbaru
+  notifications.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+
+  return notifications;
+}

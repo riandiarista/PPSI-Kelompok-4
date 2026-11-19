@@ -14,6 +14,11 @@ router.get("/availability", authorize(...ACCESS.lihatBarang), loanController.che
 // POST /api/loans/request -> ajukan peminjaman (hanya Peminjam)
 router.post("/request", authorize(...ACCESS.ajukanPeminjaman), loanController.createLoanRequest);
 
+// Status & riwayat pengajuan milik peminjam yang login
+router.get("/my-requests", authorize(...ACCESS.lihatPengajuanSendiri), loanController.getMyLoanRequests);
+router.get("/my-notifications", authorize(...ACCESS.lihatPengajuanSendiri), loanController.getMyNotifications);
+router.post("/my-requests/:id/cancel", authorize(...ACCESS.lihatPengajuanSendiri), loanController.cancelLoanRequest);
+
 // GET /api/loans/queue -> antrean persetujuan peminjaman (hanya Kadep)
 router.get("/queue", authorize(...ACCESS.approvalPeminjaman), loanController.getApprovalQueue);
 router.get("/history", authorize(...ACCESS.lihatLaporan), loanController.getLoanHistory);

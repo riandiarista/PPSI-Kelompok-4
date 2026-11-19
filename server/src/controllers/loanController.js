@@ -175,3 +175,56 @@ export async function decideLoanRequest(req, res, next) {
     message: "Keputusan harus berupa 'approved' atau 'rejected'",
   });
 }
+
+// GET /api/loans/my-requests?tab=all|pending|approved|borrowed|returned|rejected&search=
+export async function getMyLoanRequests(req, res, next) {
+  try {
+    const result = await loanService.getMyLoanRequests(req.user.user_id, {
+      tab: req.query.tab,
+      search: req.query.search,
+    });
+    res.json({
+      success: true,
+      data: result.items,
+      counts: result.counts,
+    });
+  } catch (err) {
+    next(err);
+  }
+}
+
+// GET /api/loans/my-notifications
+export async function getMyNotifications(req, res, next) {
+  try {
+    const notifications = await loanService.getMyNotifications(req.user.user_id);
+    res.json({
+      success: true,
+      data: notifications,
+    });
+  } catch (err) {
+    next(err);
+  }
+}
+
+// POST /api/loans/my-requests/:id/cancel
+export async function cancelLoanRequest(req, res, next) {
+  try {
+    const result = await loanService.cancelLoanRequest({
+      requestId: req.params.id,
+      borrowerId: req.user.user_id,
+    });
+    res.json({
+      success: true,
+      message: "Pengajuan peminjaman berhasil dibatalkan",
+      data: result,
+    });
+  } catch (err) {
+    if (err.status) {
+      return res.status(err.status).json({
+        success: false,
+        message: err.message,
+      });
+    }
+    next(err);
+  }
+}
