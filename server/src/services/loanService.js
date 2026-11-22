@@ -914,6 +914,58 @@ export async function approveLoanRequest({ requestId, approverId, now = new Date
       ]
     );
 
+    // Otomatis tolak pengajuan pending lain pada barang yang sama yang jadwalnya beririsan
+    const { rows: conflictingRows } = await client.query(
+      `SELECT request_id, borrower_id, planned_start_at, planned_end_at
+         FROM loan_requests
+        WHERE item_id = $1
+          AND request_id <> $2
+          AND request_status = 'pending'
+          AND tstzrange(planned_start_at, planned_end_at) && tstzrange($3::timestamptz, $4::timestamptz)
+        FOR UPDATE`,
+      [loan.item_id, reqId, loan.planned_start_at, loan.planned_end_at]
+    );
+
+    const autoRejectedIds = conflictingRows.map((r) => r.request_id);
+
+    if (autoRejectedIds.length > 0) {
+      await client.query(
+        `UPDATE loan_requests
+            SET request_status = 'rejected'
+          WHERE request_id = ANY($1::int[])`,
+        [autoRejectedIds]
+      );
+
+      const autoRejectReason =
+        "Ditolak otomatis karena barang telah disetujui untuk peminjam lain pada jadwal yang beririsan.";
+
+      for (const conf of conflictingRows) {
+        await client.query(
+          `INSERT INTO approval_decisions (request_id, approver_id, decision, reason)
+           VALUES ($1, $2, 'rejected', $3)`,
+          [conf.request_id, approverId, autoRejectReason]
+        );
+
+        await client.query(
+          `INSERT INTO audit_logs (actor_user_id, action_type, entity_type, entity_id, details)
+           VALUES ($1, 'auto_reject_conflicting_loan_request', 'loan_request', $2, $3)`,
+          [
+            approverId,
+            conf.request_id,
+            JSON.stringify({
+              approved_request_id: reqId,
+              item_id: loan.item_id,
+              item_name: loan.item_name,
+              borrower_id: conf.borrower_id,
+              planned_start_at: conf.planned_start_at,
+              planned_end_at: conf.planned_end_at,
+              reason: autoRejectReason,
+            }),
+          ]
+        );
+      }
+    }
+
     await client.query("COMMIT");
 
     return {
@@ -923,6 +975,8 @@ export async function approveLoanRequest({ requestId, approverId, now = new Date
       item_name: loan.item_name,
       planned_start_at: loan.planned_start_at,
       planned_end_at: loan.planned_end_at,
+      auto_rejected_count: autoRejectedIds.length,
+      auto_rejected_requests: autoRejectedIds,
     };
   } catch (err) {
     await client.query("ROLLBACK");

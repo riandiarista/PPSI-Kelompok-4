@@ -182,11 +182,16 @@ export default function AntreanPersetujuanPage() {
 
     setApproveModal((prev) => ({ ...prev, loading: true }))
     try {
-      await api(`/loans/${item.request_id}/approve`, {
+      const res = await api(`/loans/${item.request_id}/approve`, {
         method: 'POST',
       })
       setApproveModal({ open: false, item: null, loading: false })
-      showToast(`Pengajuan untuk "${item.item_name}" berhasil disetujui!`, 'success')
+      const autoRejectedCount = res.data?.auto_rejected_count || 0
+      const extraMsg =
+        autoRejectedCount > 0
+          ? ` (${autoRejectedCount} pengajuan lain yang beririsan otomatis ditolak)`
+          : ''
+      showToast(`Pengajuan untuk "${item.item_name}" berhasil disetujui!${extraMsg}`, 'success')
       refreshData()
     } catch (err) {
       setApproveModal((prev) => ({ ...prev, loading: false }))
@@ -1081,7 +1086,7 @@ export default function AntreanPersetujuanPage() {
                   <Icon name="clock" size={15} />
                   Pengajuan Beririsan:
                 </div>
-                Terdapat <strong>{approveModal.item.pending_overlaps} pengajuan lain</strong> yang beririsan untuk barang ini. Setelah pengajuan ini disetujui, pengajuan lain yang beririsan tidak akan dapat disetujui lagi.
+                Terdapat <strong>{approveModal.item.pending_overlaps} pengajuan lain</strong> yang beririsan untuk barang ini. Setelah pengajuan ini disetujui, pengajuan lain yang beririsan akan otomatis ditolak oleh sistem.
               </div>
             )}
 

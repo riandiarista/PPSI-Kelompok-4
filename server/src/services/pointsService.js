@@ -26,11 +26,18 @@ function httpError(status, message) {
 
 // Label tampilan level untuk frontend
 export const LEVEL_META = {
-  gold:     { label: "Teladan Utama",  color: "#B7791F", badge: "🥇", min: 300, next: null },
-  silver:   { label: "Teladan",        color: "#64748B", badge: "🥈", min: 150, next: 300  },
-  bronze:   { label: "Terpercaya",     color: "#9A3412", badge: "🥉", min: 50,  next: 150  },
-  beginner: { label: "Belum Pemula",         color: "#4A5B56", badge: "🌱", min: 0,   next: 50   },
+  teladan:    { label: "Teladan",        color: "#B7791F", badge: "🥇", min: 70, next: null },
+  terpercaya: { label: "Terpercaya",     color: "#64748B", badge: "🥈", min: 50, next: 70   },
+  pemula:     { label: "Pemula",         color: "#9A3412", badge: "🥉", min: 30, next: 50   },
+  beginner:   { label: "Belum Pemula",   color: "#4A5B56", badge: "🌱", min: 0,  next: 30   },
 };
+
+export const ALL_LEVELS_INFO = [
+  { key: "teladan",    label: "Teladan",      min: 70, badge: "🥇", color: "#B7791F" },
+  { key: "terpercaya", label: "Terpercaya",   min: 50, badge: "🥈", color: "#64748B" },
+  { key: "pemula",     label: "Pemula",       min: 30, badge: "🥉", color: "#9A3412" },
+  { key: "beginner",   label: "Belum Pemula", min: 0,  badge: "🌱", color: "#4A5B56" },
+];
 
 export function getLevelMeta(balance) {
   for (const lvl of DISCIPLINE_LEVELS) {

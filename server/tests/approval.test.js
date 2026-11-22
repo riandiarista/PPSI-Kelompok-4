@@ -354,7 +354,7 @@ describe("Persetujuan / Penolakan Peminjaman oleh Kadep", () => {
     assert.equal(approveB.body.data.conflicts[0].borrower_name, undefined);
   });
 
-  test("Pengajuan pending lain yang beririsan TIDAK otomatis ditolak dan memiliki penanda overlap di antrean", async () => {
+  test("Pengajuan pending lain yang beririsan OTOMATIS ditolak saat salah satu disetujui Kadep", async () => {
     const slot = addDays(base, 20);
 
     // Buat 3 pengajuan yang saling beririsan pada barang yang sama
@@ -395,27 +395,42 @@ describe("Persetujuan / Penolakan Peminjaman oleh Kadep", () => {
       token: kadepToken,
     });
     assert.equal(app1.status, 200);
+    assert.equal(app1.body.data.auto_rejected_count, 2);
+    assert.deepEqual(
+      app1.body.data.auto_rejected_requests.sort(),
+      [req2.request_id, req3.request_id].sort()
+    );
 
-    // req2 dan req3 TIDAK otomatis ditolak, statusnya masih 'pending'
+    // req2 dan req3 OTOMATIS ditolak oleh sistem, statusnya menjadi 'rejected'
     const { rows: checkReq2 } = await db.query(
-      "SELECT request_status FROM loan_requests WHERE request_id = $1",
+      `SELECT lr.request_status, ad.decision, ad.reason
+         FROM loan_requests lr
+         LEFT JOIN approval_decisions ad ON lr.request_id = ad.request_id
+        WHERE lr.request_id = $1`,
       [req2.request_id]
     );
-    assert.equal(checkReq2[0].request_status, "pending");
+    assert.equal(checkReq2[0].request_status, "rejected");
+    assert.equal(checkReq2[0].decision, "rejected");
+    assert.match(checkReq2[0].reason, /ditolak otomatis/i);
 
     const { rows: checkReq3 } = await db.query(
-      "SELECT request_status FROM loan_requests WHERE request_id = $1",
+      `SELECT lr.request_status, ad.decision, ad.reason
+         FROM loan_requests lr
+         LEFT JOIN approval_decisions ad ON lr.request_id = ad.request_id
+        WHERE lr.request_id = $1`,
       [req3.request_id]
     );
-    assert.equal(checkReq3[0].request_status, "pending");
+    assert.equal(checkReq3[0].request_status, "rejected");
+    assert.equal(checkReq3[0].decision, "rejected");
+    assert.match(checkReq3[0].reason, /ditolak otomatis/i);
 
-    // Saat Kadep mencoba menyetujui req2, barulah gagal dengan 409 karena bentrok dengan req1 yang sudah approved
+    // Saat mencoba menyetujui req2, gagal dengan 409 karena statusnya sudah bukan pending ('rejected')
     const app2 = await req(`/api/loans/${req2.request_id}/approve`, {
       method: "POST",
       token: kadepToken,
     });
     assert.equal(app2.status, 409);
-    assert.match(app2.body.message, /bentrok/i);
+    assert.match(app2.body.message, /sudah berstatus 'rejected'/i);
   });
 
   test("Antrean Kadep: filter tab 'queue' (<= hari ini WIB), 'scheduled' (> hari ini), dan urut terlama diajukan lebih dulu", async () => {
