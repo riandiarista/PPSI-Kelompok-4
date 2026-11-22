@@ -69,6 +69,22 @@ export async function getApprovalQueue(req, res, next) {
   }
 }
 
+// GET /api/loans/priority-recommendations -> rekomendasi prioritas peminjam khusus Kadep
+export async function getPriorityRecommendations(req, res, next) {
+  try {
+    const result = await loanService.getPriorityRecommendations({
+      search: req.query.search,
+      date: req.query.date,
+    });
+    res.json({
+      success: true,
+      data: result,
+    });
+  } catch (err) {
+    next(err);
+  }
+}
+
 // GET /api/loans/history?search=&sort_by=returned_at&sort_order=desc
 export async function getLoanHistory(req, res, next) {
   try {

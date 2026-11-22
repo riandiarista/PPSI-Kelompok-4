@@ -63,12 +63,13 @@ function formatDateTime(isoStr) {
 export default function AntreanPersetujuanPage() {
   // State data utama
   const [items, setItems] = useState([])
+  const [priorityData, setPriorityData] = useState(null)
   const [counts, setCounts] = useState({ ready: 0, scheduled: 0, history: 0 })
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [refreshKey, setRefreshKey] = useState(0)
 
-  // State navigasi tab ('queue' | 'scheduled' | 'history')
+  // State navigasi tab ('queue' | 'priority' | 'scheduled' | 'history')
   const [activeTab, setActiveTab] = useState('queue')
   const [search, setSearch] = useState('')
   const [filterOverlap, setFilterOverlap] = useState('all') // 'all' | 'has_overlap'
@@ -110,6 +111,27 @@ export default function AntreanPersetujuanPage() {
   useEffect(() => {
     let cancelled = false
 
+    if (activeTab === 'priority') {
+      const q = search.trim() ? `?search=${encodeURIComponent(search.trim())}` : ''
+      api(`/loans/priority-recommendations${q}`)
+        .then((res) => {
+          if (cancelled) return
+          setPriorityData(res.data || null)
+          setError('')
+        })
+        .catch((err) => {
+          if (cancelled) return
+          setError(err.message || 'Gagal memuat rekomendasi prioritas peminjam')
+        })
+        .finally(() => {
+          if (!cancelled) setLoading(false)
+        })
+
+      return () => {
+        cancelled = true
+      }
+    }
+
     api(`/loans/queue?tab=${activeTab}`)
       .then((res) => {
         if (cancelled) return
@@ -130,7 +152,7 @@ export default function AntreanPersetujuanPage() {
     return () => {
       cancelled = true
     }
-  }, [activeTab, refreshKey])
+  }, [activeTab, refreshKey, search])
 
   // Filter pencarian dan overlap
   const filteredItems = useMemo(() => {
@@ -271,7 +293,7 @@ export default function AntreanPersetujuanPage() {
       </div>
 
       {/* Ringkasan Statistik Kartu */}
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <div
           onClick={() => changeTab('queue')}
           className={`cursor-pointer rounded-[14px] border p-4 transition shadow-xs ${
@@ -292,6 +314,31 @@ export default function AntreanPersetujuanPage() {
           </div>
           <p className="mt-1 text-[11.5px] text-[#71827D]">
             Review queue date ≤ hari ini (WIB)
+          </p>
+        </div>
+
+        <div
+          onClick={() => changeTab('priority')}
+          className={`cursor-pointer rounded-[14px] border p-4 transition shadow-xs ${
+            activeTab === 'priority'
+              ? 'border-purple-600 bg-purple-50/60 ring-1 ring-purple-600/30'
+              : 'border-neutral-200/80 bg-white hover:border-neutral-300'
+          }`}
+        >
+          <div className="flex items-center justify-between">
+            <span className="text-[12.5px] font-medium text-purple-900">Rekomendasi Prioritas</span>
+            <span className="flex h-7 w-7 items-center justify-center rounded-full bg-purple-100 text-purple-700">
+              <Icon name="award" size={15} />
+            </span>
+          </div>
+          <div className="mt-2 flex items-baseline gap-2">
+            <span className="text-[24px] font-bold text-[#14231F]">
+              {priorityData?.total_requests ?? counts.ready}
+            </span>
+            <span className="text-[12px] text-[#4A5B56]">kandidat</span>
+          </div>
+          <p className="mt-1 text-[11.5px] text-purple-700 font-medium">
+            Diurutkan total poin per tanggal (Non-binding)
           </p>
         </div>
 
@@ -346,7 +393,7 @@ export default function AntreanPersetujuanPage() {
       <div className="rounded-[16px] border border-neutral-200/80 bg-white p-5 shadow-xs">
         {/* Navigasi Tab */}
         <div className="flex flex-wrap items-center justify-between gap-3 border-b border-neutral-200/80 pb-4">
-          <div className="flex gap-2">
+          <div className="flex flex-wrap gap-2">
             <button
               type="button"
               onClick={() => changeTab('queue')}
@@ -363,6 +410,28 @@ export default function AntreanPersetujuanPage() {
                 }`}
               >
                 {counts.ready}
+              </span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => changeTab('priority')}
+              className={`flex items-center gap-2 rounded-[10px] px-3.5 py-2 text-[13px] font-semibold transition ${
+                activeTab === 'priority'
+                  ? 'bg-purple-800 text-white shadow-xs'
+                  : 'bg-purple-50 text-purple-800 border border-purple-200 hover:bg-purple-100'
+              }`}
+            >
+              <Icon name="award" size={14} />
+              <span>Rekomendasi Prioritas</span>
+              <span
+                className={`rounded-full px-2 py-0.5 text-[11px] font-bold ${
+                  activeTab === 'priority'
+                    ? 'bg-white/20 text-white'
+                    : 'bg-purple-200/80 text-purple-900'
+                }`}
+              >
+                {priorityData?.total_requests ?? counts.ready}
               </span>
             </button>
 
@@ -424,7 +493,7 @@ export default function AntreanPersetujuanPage() {
               />
             </div>
 
-            {activeTab !== 'history' && (
+            {activeTab !== 'history' && activeTab !== 'priority' && (
               <select
                 value={filterOverlap}
                 onChange={(e) => setFilterOverlap(e.target.value)}
@@ -438,6 +507,27 @@ export default function AntreanPersetujuanPage() {
         </div>
 
         {/* Banner Penjelasan Sesuai Tab */}
+        {activeTab === 'priority' && (
+          <div className="my-3.5 flex items-start gap-3 rounded-[12px] bg-[#EEF2F6] border border-[#CBD5E1] p-4 text-[13px] leading-relaxed text-[#1E3F70]">
+            <Icon name="award" size={22} className="mt-0.5 shrink-0 text-[#1E3F70]" />
+            <div>
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="font-bold text-[14.5px] text-[#1E3F70]">
+                  Rekomendasi Prioritas Peminjam
+                </span>
+                <span className="rounded-full bg-purple-100 text-purple-800 text-[11px] font-bold px-2.5 py-0.5 border border-purple-200">
+                  Non-Binding (Tidak Mengikat)
+                </span>
+              </div>
+              <p className="mt-1 text-[#334155] text-[12.5px] leading-relaxed">
+                Pengajuan peminjaman dikelompokkan per <strong>tanggal peminjaman</strong> dan diurutkan dari <strong>total poin tertinggi ke terendah</strong>. 
+                Tie-breaker waktu pengajuan hanya berlaku bila poin sama pada tanggal yang sama. 
+                Rekomendasi ini bersifat <strong>non-binding</strong>; keputusan akhir persetujuan atau penolakan tetap berada sepenuhnya pada kewenangan Ketua Departemen.
+              </p>
+            </div>
+          </div>
+        )}
+
         {activeTab === 'queue' && (
           <div className="my-3.5 flex items-start gap-2.5 rounded-[10px] bg-[#EBF3FB] p-3 text-[12.5px] leading-relaxed text-[#1E3F70]">
             <Icon name="alert-circle" size={17} className="mt-0.5 shrink-0" />
@@ -456,8 +546,270 @@ export default function AntreanPersetujuanPage() {
           </div>
         )}
 
-        {/* Tabel / Daftar Antrean */}
-        {loading ? (
+        {/* Konten Tab Rekomendasi Prioritas Khusus Kadep */}
+        {activeTab === 'priority' ? (
+          loading ? (
+            <div className="flex flex-col items-center justify-center py-16 text-[#4A5B56]">
+              <Icon name="refresh" size={28} className="animate-spin text-[#1E3F70]" />
+              <p className="mt-3 text-[13.5px] font-medium">Memuat rekomendasi prioritas peminjam...</p>
+            </div>
+          ) : error ? (
+            <div className="rounded-[12px] bg-red-50 p-4 text-center text-[13px] text-red-600">
+              {error}
+            </div>
+          ) : !priorityData?.groups || priorityData.groups.length === 0 ? (
+            <div className="flex flex-col items-center justify-center py-16 text-center text-[#4A5B56]">
+              <div className="flex h-12 w-12 items-center justify-center rounded-full bg-purple-50 text-purple-600">
+                <Icon name="award" size={24} />
+              </div>
+              <p className="mt-3 text-[14px] font-semibold text-[#14231F]">
+                Tidak ada rekomendasi prioritas
+              </p>
+              <p className="mt-1 text-[12.5px] text-[#71827D]">
+                {search
+                  ? 'Tidak ada pengajuan yang sesuai dengan kriteria pencarian Anda.'
+                  : 'Saat ini belum ada pengajuan peminjaman pending yang memerlukan penentuan prioritas.'}
+              </p>
+            </div>
+          ) : (
+            <div className="mt-3 space-y-6">
+              {priorityData.groups.map((group) => (
+                <div
+                  key={group.loan_date}
+                  className="rounded-[14px] border border-neutral-200/90 bg-white shadow-xs overflow-hidden"
+                >
+                  {/* Header Grup Tanggal */}
+                  <div className="flex flex-wrap items-center justify-between gap-3 border-b border-neutral-200 bg-neutral-50/80 px-4 py-3">
+                    <div className="flex items-center gap-2.5">
+                      <span className="flex h-7 w-7 items-center justify-center rounded-full bg-[#1E3F70] text-white">
+                        <Icon name="calendar" size={14} />
+                      </span>
+                      <div>
+                        <div className="text-[14px] font-bold text-[#14231F]">
+                          Tanggal Peminjaman: {group.loan_date_formatted}
+                        </div>
+                        <div className="text-[11.5px] text-[#71827D]">
+                          Tanggal mulai: {group.loan_date} (WIB)
+                        </div>
+                      </div>
+                    </div>
+                    <div className="flex flex-wrap items-center gap-2 text-[11.5px]">
+                      <span className="inline-flex items-center gap-1 rounded-full bg-blue-50 px-2.5 py-0.5 font-semibold text-[#1E3F70] border border-blue-200">
+                        {group.total_borrowers} Peminjam
+                      </span>
+                      <span className="inline-flex items-center gap-1 rounded-full bg-emerald-50 px-2.5 py-0.5 font-semibold text-emerald-800 border border-emerald-200">
+                        Poin Tertinggi: {group.max_points}
+                      </span>
+                      <span className="inline-flex items-center gap-1 rounded-full bg-neutral-100 px-2.5 py-0.5 font-medium text-[#4A5B56] border border-neutral-200">
+                        Rata-rata: {group.avg_points} Poin
+                      </span>
+                      {group.has_tie && (
+                        <span className="inline-flex items-center gap-1 rounded-full bg-amber-50 px-2.5 py-0.5 font-semibold text-amber-800 border border-amber-300">
+                          <Icon name="clock" size={11} />
+                          Tie Breaker Aktif
+                        </span>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Tabel Peminjam per Tanggal */}
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-left border-collapse text-[13px]">
+                      <thead>
+                        <tr className="border-b border-neutral-200 bg-neutral-50/40 text-[11.5px] font-semibold text-[#4A5B56]">
+                          <th className="py-2.5 px-3.5 w-16 text-center">Peringkat</th>
+                          <th className="py-2.5 px-3.5">Nama Peminjam</th>
+                          <th className="py-2.5 px-3.5">Total Poin</th>
+                          <th className="py-2.5 px-3.5">Perbandingan Poin (Tanggal Sama)</th>
+                          <th className="py-2.5 px-3.5">Barang & Jadwal</th>
+                          <th className="py-2.5 px-3.5">Keperluan</th>
+                          <th className="py-2.5 px-3.5">Status Rekomendasi</th>
+                          <th className="py-2.5 px-3.5 text-right">Aksi Kadep</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-neutral-100">
+                        {group.items.map((item) => {
+                          const isTopRank = item.rank === 1
+                          const isRecommended = item.recommendation_status === 'Direkomendasikan'
+
+                          return (
+                            <tr
+                              key={item.request_id}
+                              className={`transition-colors ${
+                                isTopRank
+                                  ? 'bg-purple-50/20 hover:bg-purple-50/40'
+                                  : 'hover:bg-neutral-50/60'
+                              }`}
+                            >
+                              {/* 1. Kolom Peringkat */}
+                              <td className="py-3.5 px-3.5 align-top text-center">
+                                {item.rank === 1 ? (
+                                  <span className="inline-flex flex-col items-center justify-center h-8 w-8 rounded-full bg-amber-100 border border-amber-300 text-amber-900 font-bold text-[12.5px] shadow-2xs">
+                                    🥇 #1
+                                  </span>
+                                ) : item.rank === 2 ? (
+                                  <span className="inline-flex flex-col items-center justify-center h-8 w-8 rounded-full bg-slate-100 border border-slate-300 text-slate-700 font-bold text-[12.5px]">
+                                    🥈 #2
+                                  </span>
+                                ) : item.rank === 3 ? (
+                                  <span className="inline-flex flex-col items-center justify-center h-8 w-8 rounded-full bg-orange-100 border border-orange-300 text-orange-900 font-bold text-[12.5px]">
+                                    🥉 #3
+                                  </span>
+                                ) : (
+                                  <span className="inline-flex items-center justify-center h-7 w-7 rounded-full bg-neutral-100 text-[#4A5B56] font-semibold text-[12px]">
+                                    #{item.rank}
+                                  </span>
+                                )}
+                              </td>
+
+                              {/* 2. Kolom Nama Peminjam */}
+                              <td className="py-3.5 px-3.5 align-top">
+                                <div className="font-bold text-[#14231F] flex items-center gap-1.5">
+                                  <span>{item.borrower_name || 'Tanpa Nama'}</span>
+                                  {isTopRank && (
+                                    <span className="rounded bg-purple-100 text-purple-800 text-[10px] font-semibold px-1.5 py-0.2">
+                                      Prioritas
+                                    </span>
+                                  )}
+                                </div>
+                                <div className="text-[12px] text-[#71827D]">{item.borrower_email}</div>
+                                <div className="mt-1 inline-flex items-center rounded-md bg-neutral-100 px-2 py-0.5 text-[11px] font-medium text-[#4A5B56]">
+                                  {item.borrower_role || 'Peminjam'}
+                                </div>
+                              </td>
+
+                              {/* 3. Kolom Total Poin */}
+                              <td className="py-3.5 px-3.5 align-top">
+                                <div className="inline-flex items-baseline gap-1">
+                                  <span className="text-[16px] font-extrabold text-[#1E3F70]">
+                                    {item.total_points}
+                                  </span>
+                                  <span className="text-[11.5px] text-[#71827D]">poin</span>
+                                </div>
+                                <div className="text-[11px] font-medium capitalize text-[#4A5B56]">
+                                  Level: {item.discipline_level}
+                                </div>
+                              </td>
+
+                              {/* 4. Kolom Perbandingan Poin Antar Peminjam di Tanggal Sama */}
+                              <td className="py-3.5 px-3.5 align-top max-w-[210px]">
+                                <div className="text-[12px] font-medium text-[#14231F]">
+                                  {item.point_comparison}
+                                </div>
+
+                                {/* Visual Bar Komparasi terhadap Poin Maksimal */}
+                                {group.max_points > 0 && (
+                                  <div className="mt-1.5 w-full bg-neutral-100 rounded-full h-1.5 overflow-hidden">
+                                    <div
+                                      className={`h-1.5 rounded-full ${
+                                        isTopRank ? 'bg-emerald-600' : 'bg-blue-600'
+                                      }`}
+                                      style={{
+                                        width: `${Math.max(
+                                          10,
+                                          Math.round((Math.max(0, item.total_points) / group.max_points) * 100)
+                                        )}%`,
+                                      }}
+                                    />
+                                  </div>
+                                )}
+
+                                {/* Indikator Tie Breaker bila Poin Sama */}
+                                {item.tie_breaker_applied && (
+                                  <div className="mt-1.5 flex items-start gap-1 rounded bg-amber-50 p-1.5 text-[11px] text-amber-800 border border-amber-200">
+                                    <Icon name="clock" size={13} className="shrink-0 mt-0.5" />
+                                    <span>{item.tie_breaker_note}</span>
+                                  </div>
+                                )}
+                              </td>
+
+                              {/* 5. Kolom Barang & Jadwal */}
+                              <td className="py-3.5 px-3.5 align-top">
+                                <div className="font-semibold text-[#14231F]">{item.item_name}</div>
+                                <div className="text-[11.5px] text-[#71827D]">{item.category_name}</div>
+                                <div className="mt-1 text-[11.5px] text-[#4A5B56]">
+                                  {formatRentang(item.planned_start_at, item.planned_end_at)} (
+                                  {item.duration_days} hari)
+                                </div>
+                              </td>
+
+                              {/* 6. Kolom Keperluan */}
+                              <td className="py-3.5 px-3.5 align-top max-w-[180px]">
+                                <p className="line-clamp-2 text-[12px] text-[#4A5B56]" title={item.purpose}>
+                                  &ldquo;{item.purpose}&rdquo;
+                                </p>
+                              </td>
+
+                              {/* 7. Kolom Status Rekomendasi */}
+                              <td className="py-3.5 px-3.5 align-top">
+                                {isRecommended ? (
+                                  <span className="inline-flex items-center gap-1 rounded-[6px] border border-emerald-300 bg-emerald-50 px-2.5 py-1 text-[12px] font-bold text-emerald-800 shadow-2xs">
+                                    <Icon name="check" size={14} />
+                                    Direkomendasikan
+                                  </span>
+                                ) : (
+                                  <span className="inline-flex items-center gap-1 rounded-[6px] border border-amber-300 bg-amber-50 px-2.5 py-1 text-[12px] font-bold text-amber-800 shadow-2xs">
+                                    <Icon name="alert-circle" size={14} />
+                                    Perlu tinjauan Kadep
+                                  </span>
+                                )}
+                                <p className="mt-1 text-[11px] text-[#71827D] leading-tight max-w-[200px]">
+                                  {item.recommendation_reason}
+                                </p>
+                              </td>
+
+                              {/* 8. Kolom Aksi Kadep (Non-Binding Decisions) */}
+                              <td className="py-3.5 px-3.5 align-top text-right">
+                                <div className="flex items-center justify-end gap-1.5">
+                                  <button
+                                    type="button"
+                                    onClick={() => setApproveModal({ open: true, item, loading: false })}
+                                    title="Setujui pengajuan ini"
+                                    className="inline-flex items-center gap-1 rounded-[8px] bg-[#14532D] px-2.5 py-1.5 text-[12px] font-semibold text-white shadow-xs transition hover:bg-[#0f3f22]"
+                                  >
+                                    <Icon name="check" size={14} />
+                                    Setujui
+                                  </button>
+
+                                  <button
+                                    type="button"
+                                    onClick={() =>
+                                      setRejectModal({
+                                        open: true,
+                                        item,
+                                        reason: '',
+                                        loading: false,
+                                        validationError: '',
+                                      })
+                                    }
+                                    title="Tolak pengajuan ini"
+                                    className="inline-flex items-center gap-1 rounded-[8px] border border-red-300 bg-white px-2.5 py-1.5 text-[12px] font-semibold text-red-700 shadow-xs transition hover:bg-red-50"
+                                  >
+                                    <Icon name="x" size={14} />
+                                    Tolak
+                                  </button>
+
+                                  <button
+                                    type="button"
+                                    onClick={() => setDetailItem(item)}
+                                    title="Lihat detail pengajuan"
+                                    className="inline-flex items-center rounded-[8px] border border-neutral-200 bg-white p-1.5 text-neutral-600 shadow-xs hover:bg-neutral-50"
+                                  >
+                                    <Icon name="search" size={14} />
+                                  </button>
+                                </div>
+                              </td>
+                            </tr>
+                          )
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )
+        ) : loading ? (
           <div className="flex flex-col items-center justify-center py-16 text-[#4A5B56]">
             <Icon name="refresh" size={28} className="animate-spin text-[#1E3F70]" />
             <p className="mt-3 text-[13.5px] font-medium">Memuat data pengajuan...</p>
@@ -515,8 +867,16 @@ export default function AntreanPersetujuanPage() {
                         <div className="text-[12px] text-[#71827D]">
                           {item.borrower_email}
                         </div>
-                        <div className="mt-1 inline-flex items-center rounded-md bg-neutral-100 px-2 py-0.5 text-[11px] font-medium text-[#4A5B56]">
-                          {item.borrower_role || 'Peminjam'}
+                        <div className="mt-1 flex flex-wrap items-center gap-1.5">
+                          <span className="inline-flex items-center rounded-md bg-neutral-100 px-2 py-0.5 text-[11px] font-medium text-[#4A5B56]">
+                            {item.borrower_role || 'Peminjam'}
+                          </span>
+                          {item.borrower_points !== undefined && (
+                            <span className="inline-flex items-center gap-1 rounded-md bg-purple-50 border border-purple-200 px-2 py-0.5 text-[11px] font-semibold text-purple-700">
+                              <Icon name="award" size={11} />
+                              {item.borrower_points} Poin
+                            </span>
+                          )}
                         </div>
                       </td>
 

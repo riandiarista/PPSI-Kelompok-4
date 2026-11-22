@@ -32,6 +32,38 @@ export function todayWib(now = new Date()) {
   return new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Jakarta" }).format(now);
 }
 
+// "YYYY-MM-DD" tanggal dalam WIB
+export function toDateStringWib(date) {
+  return new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Jakarta" }).format(new Date(date));
+}
+
+export function formatTanggalWib(date) {
+  return new Intl.DateTimeFormat("id-ID", {
+    weekday: "long",
+    day: "numeric",
+    month: "short",
+    year: "numeric",
+    timeZone: "Asia/Jakarta",
+  }).format(new Date(date));
+}
+
+export function formatDateTimeWib(date) {
+  const d = new Date(date);
+  const dateStr = new Intl.DateTimeFormat("id-ID", {
+    day: "numeric",
+    month: "short",
+    year: "numeric",
+    timeZone: "Asia/Jakarta",
+  }).format(d);
+  const timeStr = new Intl.DateTimeFormat("id-ID", {
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+    timeZone: "Asia/Jakarta",
+  }).format(d).replace(":", ".");
+  return `${dateStr}, ${timeStr} WIB`;
+}
+
 function addDays(dateStr, days) {
   const d = new Date(`${dateStr}T12:00:00Z`);
   d.setUTCDate(d.getUTCDate() + days);
@@ -320,6 +352,8 @@ export async function getApprovalQueue({ tab = "queue", actorUserId, now = new D
       u.full_name AS borrower_name,
       u.email AS borrower_email,
       ro.role_name AS borrower_role,
+      COALESCE(ug.point_balance, 0)::int AS borrower_points,
+      COALESCE(ug.discipline_level, 'beginner') AS borrower_discipline_level,
       r.item_id,
       i.item_name,
       c.category_name,
@@ -353,6 +387,7 @@ export async function getApprovalQueue({ tab = "queue", actorUserId, now = new D
     FROM loan_requests r
     JOIN users u ON u.user_id = r.borrower_id
     LEFT JOIN roles ro ON ro.role_id = u.role_id
+    LEFT JOIN user_gamifications ug ON ug.user_id = r.borrower_id
     JOIN items i ON i.item_id = r.item_id
     JOIN item_categories c ON c.category_id = i.category_id
     LEFT JOIN approval_decisions ad ON ad.request_id = r.request_id
@@ -396,6 +431,264 @@ export async function getApprovalQueue({ tab = "queue", actorUserId, now = new D
       history: countRows[0]?.history_count || 0,
     },
     today,
+  };
+}
+
+/**
+ * Rekomendasi prioritas peminjam khusus Ketua Departemen (Kadep).
+ *
+ * Aturan bisnis:
+ * 1. Rekomendasi bersifat NON-BINDING (keputusan akhir tetap di tangan Kadep).
+ * 2. Dikelompokkan per tanggal peminjaman (planned_start_at dalam zona waktu WIB).
+ * 3. Di dalam setiap tanggal, diurutkan dari total poin kedisiplinan peminjam tertinggi ke terendah.
+ * 4. Tie breaker HANYA berlaku bila total poin sama pada tanggal yang sama:
+ *    - Peminjam yang mengajukan lebih dulu (submitted_at ASC, lalu request_id ASC) mendapatkan peringkat lebih tinggi.
+ * 5. Menyajikan:
+ *    - nama peminjam
+ *    - tanggal peminjaman
+ *    - total poin peminjam
+ *    - peringkat dalam tanggal tersebut
+ *    - perbandingan poin antar peminjam di tanggal yang sama
+ *    - keperluan peminjaman
+ *    - status rekomendasi: 'Direkomendasikan' | 'Perlu tinjauan Kadep'
+ */
+export async function getPriorityRecommendations({ search = "", date = "", now = new Date() } = {}) {
+  const query = `
+    SELECT
+      r.request_id,
+      r.borrower_id,
+      u.full_name AS borrower_name,
+      u.email AS borrower_email,
+      ro.role_name AS borrower_role,
+      COALESCE(ug.point_balance, 0)::int AS total_points,
+      COALESCE(ug.discipline_level, 'beginner') AS discipline_level,
+      r.item_id,
+      i.item_name,
+      c.category_name,
+      i.availability_status AS item_availability_status,
+      r.purpose,
+      r.planned_start_at,
+      r.planned_end_at,
+      r.submitted_at,
+      r.review_queue_date::text AS review_queue_date,
+      r.request_status,
+      (
+        SELECT COUNT(*)::int
+          FROM loan_requests o
+         WHERE o.item_id = r.item_id
+           AND o.request_id <> r.request_id
+           AND o.request_status = 'pending'
+           AND tstzrange(o.planned_start_at, o.planned_end_at) && tstzrange(r.planned_start_at, r.planned_end_at)
+      ) AS pending_overlaps,
+      (
+        SELECT COUNT(*)::int
+          FROM loan_requests o
+         WHERE o.item_id = r.item_id
+           AND o.request_id <> r.request_id
+           AND o.request_status = 'approved'
+           AND tstzrange(o.planned_start_at, o.planned_end_at) && tstzrange(r.planned_start_at, r.planned_end_at)
+      ) AS approved_overlaps
+    FROM loan_requests r
+    JOIN users u ON u.user_id = r.borrower_id
+    LEFT JOIN roles ro ON ro.role_id = u.role_id
+    LEFT JOIN user_gamifications ug ON ug.user_id = r.borrower_id
+    JOIN items i ON i.item_id = r.item_id
+    JOIN item_categories c ON c.category_id = i.category_id
+    WHERE r.request_status = 'pending'
+    ORDER BY (r.planned_start_at AT TIME ZONE 'Asia/Jakarta')::date ASC, r.submitted_at ASC, r.request_id ASC
+  `;
+
+  const { rows } = await db.query(query);
+  const nowTime = now.getTime();
+
+  // Filter search jika ada
+  let filteredRows = rows;
+  const q = String(search || "").trim().toLowerCase();
+  if (q) {
+    filteredRows = filteredRows.filter(
+      (r) =>
+        r.borrower_name?.toLowerCase().includes(q) ||
+        r.borrower_email?.toLowerCase().includes(q) ||
+        r.item_name?.toLowerCase().includes(q) ||
+        r.category_name?.toLowerCase().includes(q) ||
+        r.purpose?.toLowerCase().includes(q)
+    );
+  }
+
+  // Filter tanggal tertentu jika ada
+  if (date) {
+    filteredRows = filteredRows.filter((r) => toDateStringWib(r.planned_start_at) === date);
+  }
+
+  // Kelompokkan per tanggal peminjaman (WIB)
+  const dateGroupsMap = new Map();
+
+  for (const row of filteredRows) {
+    const loanDate = toDateStringWib(row.planned_start_at);
+    if (!dateGroupsMap.has(loanDate)) {
+      dateGroupsMap.set(loanDate, []);
+    }
+    dateGroupsMap.get(loanDate).push(row);
+  }
+
+  const groups = [];
+  let allRankedCount = 0;
+
+  for (const [loanDate, items] of dateGroupsMap.entries()) {
+    // 1. Urutkan: Total poin tertinggi ke terendah.
+    //    Tie breaker HANYA berlaku bila total poin sama pada tanggal yang sama:
+    //    submitted_at ASC, request_id ASC
+    items.sort((a, b) => {
+      if (b.total_points !== a.total_points) {
+        return b.total_points - a.total_points;
+      }
+      // Poin sama -> Tie Breaker aktif: peminjam yang mengajukan lebih dulu
+      const tA = new Date(a.submitted_at).getTime();
+      const tB = new Date(b.submitted_at).getTime();
+      if (tA !== tB) return tA - tB;
+      return a.request_id - b.request_id;
+    });
+
+    const totalBorrowers = items.length;
+    const maxPoints = Math.max(...items.map((it) => it.total_points));
+    const minPoints = Math.min(...items.map((it) => it.total_points));
+    const sumPoints = items.reduce((acc, it) => acc + it.total_points, 0);
+    const avgPoints = Math.round(sumPoints / totalBorrowers);
+
+    // Hitung frekuensi poin untuk mendeteksi apakah tie breaker terjadi pada tanggal ini
+    const pointFreq = {};
+    for (const it of items) {
+      pointFreq[it.total_points] = (pointFreq[it.total_points] || 0) + 1;
+    }
+
+    const rankedItems = items.map((it, idx) => {
+      const rank = idx + 1;
+      const isTieWithOthers = pointFreq[it.total_points] > 1;
+
+      const startTime = new Date(it.planned_start_at).getTime();
+      const endTime = new Date(it.planned_end_at).getTime();
+      const isExpired = endTime <= nowTime;
+      const durationDays = Math.max(1, Math.round((endTime - startTime) / DAY_MS));
+      const hasApprovedConflict = it.approved_overlaps > 0;
+      const hasPendingConflict = it.pending_overlaps > 0;
+
+      // 2. Perbandingan poin antar peminjam di tanggal yang sama
+      let pointComparison = "";
+      if (totalBorrowers === 1) {
+        pointComparison = "Peminjam tunggal pada tanggal ini";
+      } else if (rank === 1) {
+        const nextItem = items[1];
+        const pointLead = it.total_points - nextItem.total_points;
+        if (pointLead > 0) {
+          pointComparison = `Poin tertinggi (+${pointLead} poin dibanding peringkat #2)`;
+        } else {
+          pointComparison = `Poin tertinggi (sama dengan peringkat #2, unggul via tie-breaker waktu pengajuan)`;
+        }
+      } else {
+        const topItem = items[0];
+        const pointDiff = topItem.total_points - it.total_points;
+        if (pointDiff === 0) {
+          pointComparison = `Poin sama dengan peringkat #1 (${topItem.total_points} poin), berada di peringkat #${rank} karena waktu pengajuan`;
+        } else {
+          pointComparison = `Selisih -${pointDiff} poin dari peringkat #1 (${topItem.total_points} poin)`;
+        }
+      }
+
+      // Daftar perbandingan rekanan di tanggal yang sama
+      const peersComparison = items.map((p, pIdx) => ({
+        rank: pIdx + 1,
+        borrower_name: p.borrower_name,
+        total_points: p.total_points,
+        is_current: p.request_id === it.request_id,
+        diff_from_current: p.total_points - it.total_points,
+      }));
+
+      // 3. Status rekomendasi: 'Direkomendasikan' | 'Perlu tinjauan Kadep'
+      let recommendationStatus = "Perlu tinjauan Kadep";
+      let recommendationReason = "";
+
+      if (isExpired) {
+        recommendationStatus = "Perlu tinjauan Kadep";
+        recommendationReason = "Batas waktu peminjaman sudah lewat. Aturan melarang persetujuan (sarankan ditolak).";
+      } else if (hasApprovedConflict) {
+        recommendationStatus = "Perlu tinjauan Kadep";
+        recommendationReason = "Jadwal bentrok dengan pengajuan lain yang sudah disetujui.";
+      } else if (rank === 1 && it.total_points >= 0) {
+        recommendationStatus = "Direkomendasikan";
+        if (isTieWithOthers) {
+          recommendationReason = `Memiliki poin tertinggi (${it.total_points} poin) bersama peminjam lain, unggul peringkat via tie-breaker waktu pengajuan lebih awal.`;
+        } else if (totalBorrowers > 1) {
+          recommendationReason = `Memiliki poin tertinggi (${it.total_points} poin) di antara ${totalBorrowers} peminjam pada tanggal ini.`;
+        } else {
+          recommendationReason = `Peminjam tunggal dengan saldo ${it.total_points} poin pada tanggal ini.`;
+        }
+      } else {
+        recommendationStatus = "Perlu tinjauan Kadep";
+        if (hasPendingConflict) {
+          recommendationReason = `Poin peminjam (${it.total_points} poin) berada di peringkat #${rank} dan memiliki ${it.pending_overlaps} pengajuan pending lain yang beririsan.`;
+        } else {
+          recommendationReason = `Poin peminjam (${it.total_points} poin) berada di peringkat #${rank} di bawah peminjam teratas (${items[0].total_points} poin).`;
+        }
+      }
+
+      allRankedCount++;
+
+      return {
+        request_id: it.request_id,
+        borrower_id: it.borrower_id,
+        borrower_name: it.borrower_name,
+        borrower_email: it.borrower_email,
+        borrower_role: it.borrower_role,
+        total_points: it.total_points,
+        discipline_level: it.discipline_level,
+        item_id: it.item_id,
+        item_name: it.item_name,
+        category_name: it.category_name,
+        item_availability_status: it.item_availability_status,
+        purpose: it.purpose,
+        planned_start_at: it.planned_start_at,
+        planned_end_at: it.planned_end_at,
+        duration_days: durationDays,
+        submitted_at: it.submitted_at,
+        review_queue_date: it.review_queue_date,
+        request_status: it.request_status,
+        is_expired: isExpired,
+        pending_overlaps: it.pending_overlaps,
+        approved_overlaps: it.approved_overlaps,
+        rank,
+        loan_date: loanDate,
+        loan_date_formatted: formatTanggalWib(it.planned_start_at),
+        tie_breaker_applied: isTieWithOthers,
+        tie_breaker_note: isTieWithOthers
+          ? `Poin sama (${it.total_points} poin). Tie breaker menggunakan waktu pengajuan (${formatDateTimeWib(it.submitted_at)}).`
+          : null,
+        point_comparison: pointComparison,
+        diff_from_top: it.total_points - maxPoints,
+        peers_comparison: peersComparison,
+        recommendation_status: recommendationStatus,
+        recommendation_reason: recommendationReason,
+      };
+    });
+
+    groups.push({
+      loan_date: loanDate,
+      loan_date_formatted: formatTanggalWib(items[0].planned_start_at),
+      total_borrowers: totalBorrowers,
+      max_points: maxPoints,
+      min_points: minPoints,
+      avg_points: avgPoints,
+      has_tie: Object.values(pointFreq).some((cnt) => cnt > 1),
+      items: rankedItems,
+    });
+  }
+
+  return {
+    disclaimer: "Rekomendasi prioritas ini bersifat non-binding (tidak mengikat). Keputusan akhir persetujuan atau penolakan tetap berada sepenuhnya pada kewenangan Ketua Departemen.",
+    is_non_binding: true,
+    total_dates: groups.length,
+    total_requests: allRankedCount,
+    today: todayWib(now),
+    groups,
   };
 }
 

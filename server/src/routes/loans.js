@@ -21,6 +21,7 @@ router.post("/my-requests/:id/cancel", authorize(...ACCESS.lihatPengajuanSendiri
 
 // GET /api/loans/queue -> antrean persetujuan peminjaman (hanya Kadep)
 router.get("/queue", authorize(...ACCESS.approvalPeminjaman), loanController.getApprovalQueue);
+router.get("/priority-recommendations", authorize(...ACCESS.approvalPeminjaman), loanController.getPriorityRecommendations);
 router.get("/history", authorize(...ACCESS.lihatLaporan), loanController.getLoanHistory);
 router.get("/late-report", authorize(...ACCESS.lihatLaporan), loanController.getLateLoanReport);
 
