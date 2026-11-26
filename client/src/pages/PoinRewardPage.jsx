@@ -155,6 +155,17 @@ export default function PoinRewardPage() {
     ]
   }, [pointsData])
 
+  // Ringkasan aturan poin yang berlaku (diatur Kadep); cadangan = nilai bawaan
+  const ruleSummary = useMemo(() => {
+    const get = (key, fallback) => pointsData?.point_rules?.find((r) => r.key === key)?.points ?? fallback
+    return [
+      { label: 'Tepat waktu & baik', points: get('ON_TIME_GOOD', 10) },
+      { label: 'Rusak ringan', points: get('ON_TIME_MINOR_DAMAGE', 2) },
+      { label: 'Keterlambatan', points: get('LATE_PER_DAY', -2), perDay: true },
+      { label: 'Kerusakan parah/hilang', points: get('ON_TIME_MAJOR_DAMAGE', -5) + get('MAJOR_DAMAGE_PENALTY', -20) },
+    ]
+  }, [pointsData])
+
   return (
     <div className="space-y-6">
       {/* Header Halaman */}
@@ -375,18 +386,14 @@ export default function PoinRewardPage() {
         {/* Ringkasan Perhitungan Poin */}
         <div className="mt-4 rounded-[12px] bg-[#FAFBF9] border border-neutral-200/60 p-3.5 text-[12px] text-[#4A5B56] leading-relaxed">
           <strong className="text-[#14231F]">Aturan Perhitungan Poin:</strong>
-          <span className="ml-2 inline-flex items-center gap-1 text-emerald-800">
-            • Tepat waktu & baik: <strong>+10 poin</strong>
-          </span>
-          <span className="ml-2 inline-flex items-center gap-1 text-emerald-800">
-            • Tepat waktu & rusak ringan: <strong>+2 poin</strong>
-          </span>
-          <span className="ml-2 inline-flex items-center gap-1 text-red-700">
-            • Keterlambatan: <strong>-2 poin / hari</strong>
-          </span>
-          <span className="ml-2 inline-flex items-center gap-1 text-red-700">
-            • Kerusakan parah/hilang: <strong>-25 poin</strong>
-          </span>
+          {ruleSummary.map((r) => (
+            <span
+              key={r.label}
+              className={`ml-2 inline-flex items-center gap-1 ${r.points >= 0 ? 'text-emerald-800' : 'text-red-700'}`}
+            >
+              • {r.label}: <strong>{r.points > 0 ? `+${r.points}` : r.points} poin{r.perDay ? ' / hari' : ''}</strong>
+            </span>
+          ))}
           <span className="ml-2 text-[#71827D]">
             • Saldo minimum: <strong>0 poin</strong> (tidak pernah bernilai negatif).
           </span>

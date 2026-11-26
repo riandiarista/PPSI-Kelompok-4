@@ -12,6 +12,7 @@ import AntreanPersetujuanPage from './pages/AntreanPersetujuanPage'
 import SerahTerimaPage from './pages/SerahTerimaPage'
 import PengembalianPage from './pages/PengembalianPage'
 import PoinRewardPage from './pages/PoinRewardPage'
+import AturanPoinRewardPage from './pages/AturanPoinRewardPage'
 import PlaceholderPage from './pages/PlaceholderPage'
 import HistoryReportPage from './pages/HistoryReportPage'
 import StatusNotifikasiPage from './pages/StatusNotifikasiPage'
@@ -62,6 +63,8 @@ function AppRoutes() {
                     <SerahTerimaPage />
                   ) : item.path === '/tendik/pengembalian' ? (
                     <PengembalianPage />
+                  ) : item.path === '/kadep/aturan-poin' ? (
+                    <AturanPoinRewardPage />
                   ) : item.path === '/kadep/laporan' ? (
                     <HistoryReportPage isKadep />
                   ) : item.path === '/tendik/laporan' ? (

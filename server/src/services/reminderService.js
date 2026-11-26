@@ -8,6 +8,7 @@
 
 import db from "../config/db.js";
 import { POINT_RULES } from "./returnService.js";
+import { getPointSettings } from "./pointSettingsService.js";
 import { sendEmail } from "./emailService.js";
 import cron from "node-cron";
 
@@ -75,10 +76,10 @@ export function formatDueTimephrase(daysDiff) {
  * Membangun isi email pengingat jatuh tempo (subjek, plain text, dan HTML sederhana).
  * Fungsi murni, mudah diuji tanpa koneksi database atau SMTP.
  */
-export function buildDueReminderEmail({ borrowerName, itemName, dueAt, daysLeft }) {
+export function buildDueReminderEmail({ borrowerName, itemName, dueAt, daysLeft, latePerDay = POINT_RULES.LATE_PER_DAY }) {
   const formattedDueAt = formatDueDateTimeWib(dueAt);
   const dueInText = formatDueTimephrase(daysLeft);
-  const penaltyPerDay = Math.abs(POINT_RULES.LATE_PER_DAY);
+  const penaltyPerDay = Math.abs(latePerDay);
 
   const subject = `[Pengingat] Pengembalian ${itemName} ${
     daysLeft === 0 ? "Jatuh Tempo Hari Ini" : `Jatuh Tempo dalam ${daysLeft} Hari`
@@ -204,6 +205,7 @@ export async function sendDueReminders({ now = new Date(), mailer = null, dryRun
     }
 
     const targets = await getDueReminderTargets({ now, client });
+    const { rules } = await getPointSettings(client);
     let sentCount = 0;
     let failedCount = 0;
     let skippedCount = 0;
@@ -215,6 +217,7 @@ export async function sendDueReminders({ now = new Date(), mailer = null, dryRun
         itemName: target.item_name,
         dueAt: target.due_at,
         daysLeft: target.days_diff,
+        latePerDay: rules.LATE_PER_DAY,
       });
 
       try {

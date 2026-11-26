@@ -1,6 +1,8 @@
 
 
 import db from "../config/db.js";
+import { DEFAULT_POINT_RULES, DEFAULT_DISCIPLINE_LEVELS } from "../constants/pointRules.js";
+import { getPointSettings } from "./pointSettingsService.js";
 
 function httpError(status, message, extra = {}) {
   const err = new Error(message);
@@ -10,23 +12,13 @@ function httpError(status, message, extra = {}) {
 }
 
 // ─── Konstanta Gamifikasi ──────────────────────────────────────────────────
-export const POINT_RULES = Object.freeze({
-  ON_TIME_GOOD:         +10,  // Tepat waktu, kondisi baik
-  ON_TIME_MINOR_DAMAGE: +2,   // Tepat waktu, kerusakan ringan
-  ON_TIME_MAJOR_DAMAGE: -5,   // Tepat waktu, kerusakan besar
-  LATE_PER_DAY:         -2,   // Per hari keterlambatan
-  MAJOR_DAMAGE_PENALTY: -20,  // Tambahan hukuman kerusakan besar / hilang
-});
+// Nilai BAWAAN. Nilai yang berlaku diambil dari tabel point_settings lewat
+// getPointSettings() dan diteruskan ke fungsi-fungsi di bawah.
+export const POINT_RULES = DEFAULT_POINT_RULES;
+export const DISCIPLINE_LEVELS = DEFAULT_DISCIPLINE_LEVELS;
 
-export const DISCIPLINE_LEVELS = [
-  { name: "teladan",    min: 70 },
-  { name: "terpercaya", min: 50 },
-  { name: "pemula",     min: 30 },
-  { name: "beginner",   min: 0  },
-];
-
-export function calculateLevel(balance) {
-  for (const lvl of DISCIPLINE_LEVELS) {
+export function calculateLevel(balance, levels = DISCIPLINE_LEVELS) {
+  for (const lvl of levels) {
     if (balance >= lvl.min) return lvl.name;
   }
   return "beginner";
@@ -58,7 +50,7 @@ export function getItemStatusAfterReturn(returnCondition) {
  * @param {string}  opts.returnCondition  - 'good' | 'minor_damage' | 'major_damage'
  * @returns {{ delta: number, breakdown: object }}
  */
-export function calculatePointDelta({ lateDays, returnCondition }) {
+export function calculatePointDelta({ lateDays, returnCondition, rules = POINT_RULES }) {
   const days = Math.max(0, Math.floor(lateDays));
   let conditionPoints = 0;
   let latePoints = 0;
@@ -66,16 +58,16 @@ export function calculatePointDelta({ lateDays, returnCondition }) {
 
   // Poin kondisi (hanya berlaku jika tepat waktu; jika terlambat kondisi masih dihitung)
   if (returnCondition === "good") {
-    conditionPoints = days === 0 ? POINT_RULES.ON_TIME_GOOD : 0;
+    conditionPoints = days === 0 ? rules.ON_TIME_GOOD : 0;
   } else if (returnCondition === "minor_damage") {
-    conditionPoints = days === 0 ? POINT_RULES.ON_TIME_MINOR_DAMAGE : POINT_RULES.ON_TIME_MINOR_DAMAGE;
+    conditionPoints = rules.ON_TIME_MINOR_DAMAGE;
   } else if (returnCondition === "major_damage") {
-    conditionPoints = POINT_RULES.ON_TIME_MAJOR_DAMAGE;
-    majorDamagePenalty = POINT_RULES.MAJOR_DAMAGE_PENALTY;
+    conditionPoints = rules.ON_TIME_MAJOR_DAMAGE;
+    majorDamagePenalty = rules.MAJOR_DAMAGE_PENALTY;
   }
 
   // Penalti keterlambatan
-  latePoints = days > 0 ? POINT_RULES.LATE_PER_DAY * days : 0;
+  latePoints = days > 0 ? rules.LATE_PER_DAY * days : 0;
 
   const delta = conditionPoints + latePoints + majorDamagePenalty;
 
@@ -175,7 +167,8 @@ export async function previewReturnPoints({ loanId, returnedAt, returnCondition 
   const dueTime    = new Date(tx.due_at);
   const lateDays = calculateLateDays(dueTime, returnTime);
 
-  const { delta, breakdown } = calculatePointDelta({ lateDays, returnCondition });
+  const settings = await getPointSettings();
+  const { delta, breakdown } = calculatePointDelta({ lateDays, returnCondition, rules: settings.rules });
 
   const currentBalance = tx.current_points;
   const newBalance     = Math.max(0, currentBalance + delta);
@@ -190,7 +183,7 @@ export async function previewReturnPoints({ loanId, returnedAt, returnCondition 
     late_days:        lateDays,
     point_delta:      actualDelta,
     new_balance:      newBalance,
-    new_level:        calculateLevel(newBalance),
+    new_level:        calculateLevel(newBalance, settings.levels),
     breakdown,
   };
 }
@@ -269,7 +262,8 @@ export async function confirmReturn({
     const itemStatus = getItemStatusAfterReturn(returnCondition);
 
     // Hitung poin
-    const { delta: rawDelta, breakdown } = calculatePointDelta({ lateDays, returnCondition });
+    const settings = await getPointSettings(client);
+    const { delta: rawDelta, breakdown } = calculatePointDelta({ lateDays, returnCondition, rules: settings.rules });
 
     // Ambil / buat baris gamifikasi (upsert)
     const { rows: gamRows } = await client.query(
@@ -282,7 +276,7 @@ export async function confirmReturn({
     const currentBalance = gamRows[0].point_balance;
     const newBalance     = Math.max(0, currentBalance + rawDelta);
     const actualDelta    = newBalance - currentBalance;
-    const newLevel       = calculateLevel(newBalance);
+    const newLevel       = calculateLevel(newBalance, settings.levels);
 
     // 1. Catat return_inspections
     const { rows: inspRows } = await client.query(

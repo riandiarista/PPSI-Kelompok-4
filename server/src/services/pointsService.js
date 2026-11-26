@@ -17,6 +17,8 @@
 
 import db from "../config/db.js";
 import { DISCIPLINE_LEVELS } from "./returnService.js";
+import { LEVEL_DISPLAY } from "../constants/pointRules.js";
+import { getPointSettings, describeSettings } from "./pointSettingsService.js";
 
 function httpError(status, message) {
   const err = new Error(message);
@@ -39,13 +41,17 @@ export const ALL_LEVELS_INFO = [
   { key: "beginner",   label: "Belum Pemula", min: 0,  badge: "🌱", color: "#4A5B56" },
 ];
 
-export function getLevelMeta(balance) {
-  for (const lvl of DISCIPLINE_LEVELS) {
-    if (balance >= lvl.min) {
-      return { name: lvl.name, ...LEVEL_META[lvl.name] };
-    }
-  }
-  return { name: "beginner", ...LEVEL_META.beginner };
+/**
+ * Level aktif + batas bawah (min) dan batas level berikutnya (next).
+ * @param {number} balance
+ * @param {Array<{name:string,min:number}>} [levels] - ambang yang berlaku, urut tertinggi → terendah
+ */
+export function getLevelMeta(balance, levels = DISCIPLINE_LEVELS) {
+  const idx = levels.findIndex((lvl) => balance >= lvl.min);
+  const i = idx === -1 ? levels.length - 1 : idx;
+  const lvl = levels[i];
+  const { label, color, badge } = LEVEL_DISPLAY[lvl.name];
+  return { name: lvl.name, label, color, badge, min: lvl.min, next: i > 0 ? levels[i - 1].min : null };
 }
 
 /**
@@ -99,7 +105,9 @@ export async function getMyPoints(userId) {
   );
   const stats = statRows[0];
 
-  const levelMeta = getLevelMeta(balance);
+  const settings  = await getPointSettings();
+  const levelMeta = getLevelMeta(balance, settings.levels);
+  const described = describeSettings(settings);
   const progress  = calculateProgress(balance, levelMeta);
 
   return {
@@ -113,6 +121,9 @@ export async function getMyPoints(userId) {
     level_next:      levelMeta.next,
     level_progress:  progress,
     updated_at:      gam.updated_at,
+    // Aturan yang berlaku (dapat diubah Kadep)
+    all_levels:      [...described.levels].reverse(),
+    point_rules:     described.point_rules,
     stats: {
       total_transactions: stats.total_transactions,
       total_earned:       stats.total_earned,

@@ -6,6 +6,7 @@
  *   GET /api/points/me/history        → Riwayat transaksi poin milik user login (KNF-02)
  *   GET /api/points/rewards           → Daftar periode reward dan pemenang apresiasi
  *   GET /api/points/rewards/my-awards → Daftar penghargaan yang diraih user login
+ *   /api/points/admin/*               → Khusus Kadep: aturan poin, reward, periode, pemenang
  */
 
 import { Router } from "express";
@@ -45,5 +46,23 @@ router.get(
   authorize(...ACCESS.lihatPoinSendiri),
   pointsController.getMyAwards
 );
+
+// ─── Kadep: Aturan Poin & Reward ────────────────────────────────────────────
+const kadepOnly = authorize(...ACCESS.aturPoinReward);
+
+router.get("/admin/rules", kadepOnly, pointsController.getPointRules);
+router.put("/admin/rules", kadepOnly, pointsController.updatePointRules);
+
+router.get("/admin/rewards", kadepOnly, pointsController.listRewards);
+router.post("/admin/rewards", kadepOnly, pointsController.createReward);
+router.put("/admin/rewards/:id", kadepOnly, pointsController.updateReward);
+router.delete("/admin/rewards/:id", kadepOnly, pointsController.deleteReward);
+
+router.post("/admin/periods", kadepOnly, pointsController.createPeriod);
+router.put("/admin/periods/:id", kadepOnly, pointsController.updatePeriod);
+router.get("/admin/periods/:id/leaderboard", kadepOnly, pointsController.getPeriodLeaderboard);
+router.post("/admin/periods/:id/awards", kadepOnly, pointsController.giveAward);
+
+router.delete("/admin/awards/:id", kadepOnly, pointsController.revokeAward);
 
 export default router;

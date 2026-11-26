@@ -4,6 +4,8 @@
  */
 
 import * as pointsService from "../services/pointsService.js";
+import * as rewardAdminService from "../services/rewardAdminService.js";
+import * as pointSettingsService from "../services/pointSettingsService.js";
 
 /**
  * GET /api/points/me
@@ -79,3 +81,74 @@ export async function getMyAwards(req, res, next) {
     next(err);
   }
 }
+
+// ─── Kadep: Aturan Poin & Reward ────────────────────────────────────────────
+
+
+function handle(fn, status = 200) {
+  return async (req, res, next) => {
+    try {
+      const data = await fn(req);
+      if (status === 204) return res.status(204).end();
+      res.status(status).json({ success: true, data });
+    } catch (err) {
+      next(err);
+    }
+  };
+}
+
+/** GET /api/points/admin/rules — aturan perhitungan poin & ambang level */
+export const getPointRules = handle(() => rewardAdminService.getPointRules());
+
+/** PUT /api/points/admin/rules — ubah aturan poin & ambang level */
+export const updatePointRules = handle((req) =>
+  pointSettingsService.updatePointSettings(req.user.user_id, req.body)
+);
+
+/** GET /api/points/admin/rewards — daftar definisi reward */
+export const listRewards = handle(() => rewardAdminService.listRewards());
+
+/** POST /api/points/admin/rewards */
+export const createReward = handle(
+  (req) => rewardAdminService.createReward(req.user.user_id, req.body),
+  201
+);
+
+/** PUT /api/points/admin/rewards/:id */
+export const updateReward = handle((req) =>
+  rewardAdminService.updateReward(req.user.user_id, req.params.id, req.body)
+);
+
+/** DELETE /api/points/admin/rewards/:id */
+export const deleteReward = handle(
+  (req) => rewardAdminService.deleteReward(req.user.user_id, req.params.id),
+  204
+);
+
+/** POST /api/points/admin/periods */
+export const createPeriod = handle(
+  (req) => rewardAdminService.createPeriod(req.user.user_id, req.body),
+  201
+);
+
+/** PUT /api/points/admin/periods/:id */
+export const updatePeriod = handle((req) =>
+  rewardAdminService.updatePeriod(req.user.user_id, req.params.id, req.body)
+);
+
+/** GET /api/points/admin/periods/:id/leaderboard?limit=20 */
+export const getPeriodLeaderboard = handle((req) =>
+  rewardAdminService.getPeriodLeaderboard(req.params.id, { limit: req.query.limit })
+);
+
+/** POST /api/points/admin/periods/:id/awards — { reward_id, user_id, note } */
+export const giveAward = handle(
+  (req) => rewardAdminService.giveAward(req.user.user_id, req.params.id, req.body),
+  201
+);
+
+/** DELETE /api/points/admin/awards/:id */
+export const revokeAward = handle(
+  (req) => rewardAdminService.revokeAward(req.user.user_id, req.params.id),
+  204
+);
